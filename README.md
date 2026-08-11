@@ -94,6 +94,40 @@ Then users just post:
 /deep fusion energy 2026           → Gemini posts a cited research report
 ```
 
+## Feature matrix by model ⚡
+
+Capabilities depend heavily on *which model* and *which backend* you use.
+Verified 2026-08-11 against the live AI Pro direct API and the OpenAI-compatible
+bridge endpoint.
+
+| Capability | gemini-3.5-flash<br/>(direct) | gemini-2.5-flash<br/>(direct) | gemini-2.5-pro<br/>(direct) | agy<br/>backend |
+|---|---|---|---|---|
+| Streaming chat (OpenAI-compat) | ✅ | ✅ | ✅ | ✅ |
+| Multi-turn conversation memory | ✅ | ✅ | ✅ | ✅ |
+| **Tool calling** (functionDeclarations) | ❌ (404) | ✅ | ✅ (frequent 503) | ✅ |
+| **Forum research** (search tool + citations) | ❌ | ✅ | ✅ | ✅ |
+| **Web search tool** (discourse-ai / Google CSE) | ❌ | ✅ \* | ✅ \* | ✅ \* |
+| Live Google Search **grounding** (in-model) | ❌ | ❌ | ❌ | ✅ |
+| Topic summaries / AI Helper | ✅ | ✅ | ✅ | ✅ |
+| Deep Research (3-phase workflow) | ✅ knowledge | ✅ | ✅ | ✅ live search |
+
+\* needs a web-search provider key (Google CSE) configured in discourse-ai;
+the *tool calling* works, the search backend is a separate credential.
+
+**How to pick a model for discourse-ai agents**
+
+- Chat / Helper / Summarizers → `gemini-3.5-flash` (fast, no tools needed).
+- Tool-based agents (Forum Researcher, Web Researcher) → `gemini-2.5-flash`
+  or `gemini-2.5-pro` — register a second LLM record pointing at the same
+  bridge URL with `name: gemini-2.5-flash`.
+- Only `gemini-2.5-pro` / `gemini-2.5-flash` accept `tools` on the direct API
+  (all other aliases → HTTP 404). `gemini-2.5-pro` is frequently
+  capacity-exhausted (HTTP 503 `MODEL_CAPACITY_EXHAUSTED`), so
+  `gemini-2.5-flash` is the recommended tool-capable default.
+- The `agy` backend is the *only* path to authentic Google Search grounding
+  (official Gemini-app-style answers), but it requires interactive/keyring
+  auth — not headless-friendly on a server.
+
 ## Honest caveats ⚠️
 
 1. **The subscription does not include the Gemini API.** This project uses the
@@ -121,7 +155,7 @@ Then users just post:
 │   ├── auth_agy.py            # manual PKCE OAuth helper
 │   └── README.md
 ├── bridge/                    # HTTP bridge for external apps
-│   ├── server.py              # /health, /v1/chat, /v1/deep-research
+│   ├── server.py              # /health, /v1/chat, /v1/chat/completions (OpenAI), /v1/deep-research
 │   ├── gemini-bridge.service  # systemd unit example
 │   └── README.md
 └── discourse-gemini/          # Discourse plugin
