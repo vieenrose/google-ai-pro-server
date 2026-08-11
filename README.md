@@ -152,7 +152,7 @@ bridge endpoint.
 | Streaming chat (OpenAI-compat) | ✅ | ✅ | ✅ | ✅ |
 | Multi-turn conversation memory | ✅ | ✅ | ✅ | ✅ |
 | **Tool calling** (functionDeclarations) | ✅ | ✅ | ✅ (frequent 503) | ✅ |
-| **Forum research** (search tool + citations) | ✅ | ✅ | ✅ | ✅ |
+| **Forum research** (search tool + citations) | ✅ (fully working) | ✅ | ✅ | ✅ |
 | **Web search tool** (discourse-ai / Google CSE) | ✅ \* | ✅ \* | ✅ \* | ✅ \* |
 | Live Google Search **grounding** (in-model) | ❌ | ❌ | ❌ | ✅ |
 | Topic summaries / AI Helper | ✅ | ✅ | ✅ | ✅ |

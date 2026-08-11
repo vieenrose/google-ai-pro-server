@@ -353,7 +353,8 @@ class DirectTokenBackend:
                 except Exception:
                     response_obj = {"result": payload}
                 fr = {"name": name, "response": response_obj}
-                contents.append({"role": "function", "parts": [{"functionResponse": fr}]})
+                # NOTE: streaming endpoint rejects role "function"; "user" works on both
+                contents.append({"role": "user", "parts": [{"functionResponse": fr}]})
             elif role == "assistant":
                 tc = (m or {}).get("tool_calls") or []
                 parts = []
