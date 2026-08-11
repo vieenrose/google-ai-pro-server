@@ -123,6 +123,24 @@ Notes:
 - The `agy` interactive picker may show more names (e.g. lite variants) that
   are not servable through the `direct` backend.
 
+## Choosing the right mode ⚖️
+
+Three ways to get AI answers in the forum — they use **different knowledge
+bases** and are complementary:
+
+| | **Forum Researcher**<br/>(Discourse AI) | **Deep Research**<br/>(`@deep-research`) | **Plain summon**<br/>(`@Forum_Helper_bot`, `@ai_<model>`) |
+|---|---|---|---|
+| **Knows** | Your forum's posts only | The web / model knowledge | The current thread + model |
+| **Searches** | Posts via `PostsFilter` (keywords, topics, users, categories) | Live Google Search in the official app; knowledge-only on the `direct` backend | nothing (uses thread history as context) |
+| **Workflow** | understand → plan filter → dry-run count → refine → batch-analyze → summarize | plan → gather per question → synthesize report | single LLM call with thread memory |
+| **Output** | insights + **citations to forum posts** `[ref](/t/-/topic/post)` | structured report + **URL sources** | conversational answer |
+| **Cost** | per-post analysis (batched, dry-run first) | report workflow | one call |
+| **Best for** | "what have we discussed about X?" with receipts | "what does the world say about X?" with sources | "answer my question in the context of this thread" |
+
+The Poe-style model picker (`@ai_<model>`) gives you the *plain summon* mode
+with a choice of backend models — every reply is tagged with the driving model
+(`— ⚙️ 由 <model> 驅動`).
+
 ## Feature matrix by model ⚡
 
 Capabilities depend heavily on *which model* and *which backend* you use.
