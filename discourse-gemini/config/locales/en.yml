@@ -1,0 +1,8 @@
+en:
+  discourse_gemini:
+    not_allowed: "⚠️ You don't have permission to summon Gemini on this forum."
+    rate_limited: "⚠️ You've reached your daily Gemini usage limit. Try again tomorrow."
+    error: "⚠️ Gemini hit an error: %{error}"
+    deep_started: "🧪 Deep Research started — this takes a few minutes. Gemini will post the report here when it's done."
+    deep_report_title: "Gemini Deep Research: %{topic}"
+    chat_prefix: "🤖 **Gemini**"

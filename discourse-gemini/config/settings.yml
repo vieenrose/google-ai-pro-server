@@ -1,0 +1,43 @@
+# Plugin settings for discourse-gemini
+
+gemini_enabled:
+  default: true
+  client: true
+
+gemini_bridge_url:
+  default: "http://127.0.0.1:8787"
+  description: "Base URL of the local Gemini bridge (bridge/server.py)."
+
+gemini_bridge_token:
+  default: ""
+  secret: true
+  description: "Bearer token the bridge expects (BRIDGE_TOKEN). Leave empty if the bridge runs without auth."
+
+gemini_allowed_groups:
+  default: "trust_level_1|trust_level_2|trust_level_3|trust_level_4"
+  type: group_list
+  description: "Groups allowed to summon Gemini (pipe-separated)."
+
+gemini_bot_username:
+  default: "gemini"
+  description: "Username of the bot that posts Gemini's replies."
+
+gemini_model:
+  default: "gemini-3.5-flash"
+  description: "Default model for chat replies."
+
+gemini_daily_limit_per_user:
+  default: 20
+  min: 1
+  max: 1000
+  description: "How many Gemini calls each user may make per day."
+
+gemini_deep_research_enabled:
+  default: true
+  description: "Allow /deep research commands."
+
+gemini_deep_research_max_questions:
+  default: 3
+  min: 1
+  max: 6
+  description: "Number of sub-questions the research workflow explores."
