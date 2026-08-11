@@ -211,6 +211,25 @@ _USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 _CLIENT_METADATA = json.dumps({"ideType": "ANTIGRAVITY", "platform": "MACOS", "pluginType": "GEMINI"}, separators=(",", ":"))
 
 
+def _content_to_parts(content):
+    """OpenAI content (string or parts array) -> Gemini parts (text + inlineData)."""
+    if isinstance(content, list):
+        parts = []
+        for el in content:
+            if not isinstance(el, dict):
+                continue
+            if el.get("type") == "text" and el.get("text"):
+                parts.append({"text": str(el["text"])})
+            elif el.get("type") == "image_url":
+                url = (el.get("image_url") or {}).get("url") or ""
+                if url.startswith("data:image/"):
+                    head, _, b64 = url.partition(",")
+                    mime = head[5:].split(";")[0]
+                    parts.append({"inlineData": {"mimeType": mime, "data": b64}})
+        return parts
+    return [{"text": str(content)}] if content is not None else []
+
+
 class DirectTokenBackend:
     """Reuses the agy OAuth token and calls cloudcode-pa.googleapis.com directly.
 
@@ -376,8 +395,11 @@ class DirectTokenBackend:
                     parts.append(part_obj)
                 contents.append({"role": "model", "parts": parts or [{"text": ""}]})
             else:
-                if content is not None:
-                    contents.append({"role": "user", "parts": [{"text": str(content)}]})
+                if content is None:
+                    next
+                parts = _content_to_parts(content)
+                if parts:
+                    contents.append({"role": "user", "parts": parts})
         default_system = DEFAULT_SYSTEM_INSTRUCTION
         if tools and not system_parts:
             # tools present + no user system prompt: allow tool use
