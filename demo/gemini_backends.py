@@ -56,6 +56,8 @@ class ChatResult:
     conversation_id: str = ""
     error: str = ""
     raw: dict = field(default_factory=dict)
+    tool_calls: list = field(default_factory=list)
+    finish_reason: str = ""
 
 
 def build_prompt(messages: list[dict], system: str = "") -> str:
@@ -286,38 +288,83 @@ class DirectTokenBackend:
             "requestId": f"agent-{uuid.uuid4().hex}",
         }
 
-    def chat_messages(self, messages, model: str = "gemini-3.5-flash", stream: bool = False):
-        """OpenAI-style [{role, content}] -> Gemini. Returns ChatResult (non-stream)."""
+    @staticmethod
+    def _extract_tool_calls(resp: dict) -> list:
+        """Gemini functionCall parts -> OpenAI tool_calls."""
+        calls = []
+        for c in resp.get("candidates", []):
+            for part in c.get("content", {}).get("parts", []) or []:
+                fc = part.get("functionCall")
+                if fc:
+                    calls.append({
+                        "id": f"call_{len(calls)}",
+                        "type": "function",
+                        "function": {"name": fc.get("name", ""), "arguments": json.dumps(fc.get("args", {}), ensure_ascii=False)},
+                    })
+        return calls
+
+    def chat_messages(self, messages, model: str = "gemini-3.5-flash", stream: bool = False,
+                      tools=None, tool_choice=None):
+        """OpenAI-style messages (+tools) -> Gemini. Returns ChatResult (non-stream)."""
         try:
-            resp = self._generate_envelope(self._envelope_messages(messages, model))
+            resp = self._generate_envelope(self._envelope_messages(messages, model, tools, tool_choice))
         except Exception as e:  # noqa: BLE001
             return ChatResult(text="", error=str(e))
         text, usage = _gemini_response_to_text(resp)
-        return ChatResult(text=text, model=model, usage=usage, raw=resp)
+        finish = (resp.get("candidates") or [{}])[0].get("finishReason", "")
+        return ChatResult(text=text, model=model, usage=usage, raw=resp,
+                          tool_calls=self._extract_tool_calls(resp),
+                          finish_reason="tool_calls" if self._extract_tool_calls(resp) else ("stop" if finish == "STOP" else ""))
 
-    def chat_messages_stream(self, messages, model: str = "gemini-3.5-flash"):
-        """OpenAI-style [{role, content}] -> yields (delta, meta) tuples (streaming)."""
-        for event in self._generate_stream_envelope(self._envelope_messages(messages, model)):
-            for part in (event.get("candidates") or [{}])[0].get("content", {}).get("parts", []) or []:
+    def chat_messages_stream(self, messages, model: str = "gemini-3.5-flash", tools=None, tool_choice=None):
+        """OpenAI-style messages (+tools) -> yields (delta, meta) tuples (streaming)."""
+        for event in self._generate_stream_envelope(self._envelope_messages(messages, model, tools, tool_choice)):
+            cand = (event.get("candidates") or [{}])[0]
+            parts = cand.get("content", {}).get("parts", []) or []
+            for part in parts:
                 if part.get("text"):
                     yield part["text"], {"type": "text"}
+                fc = part.get("functionCall")
+                if fc:
+                    yield "", {"type": "tool_call", "tool_call": {
+                        "id": f"call_{abs(hash(fc.get('name','')))}",
+                        "type": "function",
+                        "function": {"name": fc.get("name", ""), "arguments": json.dumps(fc.get("args", {}), ensure_ascii=False)},
+                    }}
             usage = event.get("usageMetadata")
             if usage:
                 yield "", {"usage": usage}
 
-    def _envelope_messages(self, messages, model: str) -> dict:
+    def _envelope_messages(self, messages, model: str, tools=None, tool_choice=None) -> dict:
         system_parts, contents = [], []
         for m in messages:
             role = (m or {}).get("role", "user")
             content = (m or {}).get("content")
-            if content is None:
-                continue
             if role == "system":
-                system_parts.append({"text": str(content)})
+                if content is not None:
+                    system_parts.append({"text": str(content)})
+            elif role == "tool":
+                # tool result from a previous call -> functionResponse
+                name = (m.get("name") or m.get("tool_call_id") or "tool")
+                payload = content if content is not None else ""
+                contents.append({"role": "user",
+                                 "parts": [{"functionResponse": {"name": name, "response": {"result": payload}}}]})
             elif role == "assistant":
-                contents.append({"role": "model", "parts": [{"text": str(content)}]})
+                tc = (m or {}).get("tool_calls") or []
+                parts = []
+                if content:
+                    parts.append({"text": str(content)})
+                for call in tc:
+                    fn = call.get("function", {}) if isinstance(call, dict) else {}
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except Exception:
+                        args = {}
+                    parts.append({"functionCall": {"name": fn.get("name", ""), "args": args}})
+                contents.append({"role": "model", "parts": parts or [{"text": ""}]})
             else:
-                contents.append({"role": "user", "parts": [{"text": str(content)}]})
+                if content is not None:
+                    contents.append({"role": "user", "parts": [{"text": str(content)}]})
         inner = {
             "contents": contents or [{"role": "user", "parts": [{"text": "hi"}]}],
             "systemInstruction": {"parts": system_parts or [{"text": DEFAULT_SYSTEM_INSTRUCTION}]},
@@ -328,6 +375,28 @@ class DirectTokenBackend:
                           "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")
             ],
         }
+        # OpenAI tools -> Gemini functionDeclarations (only gemini-2.5-pro supports them)
+        if tools:
+            decls = []
+            for t in tools:
+                fn = (t or {}).get("function", {}) if isinstance(t, dict) else {}
+                decl = {"name": fn.get("name", "tool"), "description": fn.get("description", "")}
+                if fn.get("parameters"):
+                    decl["parameters"] = fn["parameters"]
+                decls.append(decl)
+            inner["tools"] = [{"functionDeclarations": decls}]
+            if tool_choice:
+                cfg = {"mode": "AUTO"}
+                if tool_choice == "none":
+                    cfg["mode"] = "NONE"
+                elif tool_choice == "required":
+                    cfg["mode"] = "ANY"
+                elif isinstance(tool_choice, dict):
+                    fn = (tool_choice.get("function") or {})
+                    cfg["mode"] = "ANY"
+                    if fn.get("name"):
+                        cfg["allowedFunctionNames"] = [fn["name"]]
+                inner["toolConfig"] = {"functionCallingConfig": cfg}
         return {
             "project": self._project(),
             "model": AgyBackend.MODEL_ALIASES.get(model, model),

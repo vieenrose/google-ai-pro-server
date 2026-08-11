@@ -114,16 +114,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
     def _chat_completions(self, body: dict) -> None:
         messages = body.get("messages") or []
         model = body.get("model") or "gemini-3.5-flash"
+        tools = body.get("tools")
+        tool_choice = body.get("tool_choice")
         if not messages:
             self._send(400, {"error": {"message": "messages required",
                                        "type": "invalid_request_error", "param": None, "code": None}})
             return
         if body.get("stream"):
-            self._stream_completions(messages, model)
+            self._stream_completions(messages, model, tools=tools, tool_choice=tool_choice)
             return
 
         try:
-            result = self.backend.chat_messages(messages, model=model)
+            result = self.backend.chat_messages(messages, model=model, tools=tools, tool_choice=tool_choice)
         except Exception as e:  # noqa: BLE001
             self._send(500, {"error": {"message": str(e), "type": "server_error", "param": None, "code": None}})
             return
@@ -132,6 +134,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
 
         usage = result.usage or {}
+        message = {"role": "assistant", "content": result.text or None}
+        if result.tool_calls:
+            message["tool_calls"] = result.tool_calls
         resp = {
             "id": f"chatcmpl-{uuid.uuid4().hex}",
             "object": "chat.completion",
@@ -139,8 +144,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             "model": result.model or model,
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": result.text},
-                "finish_reason": "stop",
+                "message": message,
+                "finish_reason": result.finish_reason or ("tool_calls" if result.tool_calls else "stop"),
             }],
             "usage": {
                 "prompt_tokens": usage.get("promptTokenCount", 0),
@@ -150,7 +155,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         }
         self._send(200, resp)
 
-    def _stream_completions(self, messages, model) -> None:
+    def _stream_completions(self, messages, model, tools=None, tool_choice=None) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -176,11 +181,34 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(d)}\n\n".encode())
             self.wfile.flush()
 
+        _tool_idx = {"n": 0}
+
+        def tool_chunk(call):
+            idx = _tool_idx["n"]
+            _tool_idx["n"] += 1
+            delta = {"tool_calls": [{
+                "index": idx,
+                "id": call["id"],
+                "type": "function",
+                "function": {"name": call["function"]["name"], "arguments": call["function"]["arguments"]},
+            }]}
+            d = {
+                "id": f"chatcmpl-{uuid.uuid4().hex}",
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+            }
+            self.wfile.write(f"data: {json.dumps(d)}\n\n".encode())
+            self.wfile.flush()
+
         try:
             chunk(role_done=True)
-            for delta, _meta in self.backend.chat_messages_stream(messages, model=model):
+            for delta, meta in self.backend.chat_messages_stream(messages, model=model, tools=tools, tool_choice=tool_choice):
                 if delta:
                     chunk(delta_text=delta)
+                if meta and meta.get("type") == "tool_call":
+                    tool_chunk(meta["tool_call"])
             chunk(finish="stop")
         except Exception as e:  # noqa: BLE001
             try:
