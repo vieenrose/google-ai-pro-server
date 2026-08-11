@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """
-bridge/server.py — tiny HTTP bridge between Discourse and the Gemini AI Pro demo.
+bridge/server.py — HTTP bridge between Discourse and the Gemini AI Pro demo.
 
 Endpoints (all require `Authorization: Bearer <BRIDGE_TOKEN>` if set):
 
-    GET  /health                → {ok, backend, authenticated}
-    POST /v1/chat               → {reply, model, usage, sources}
-        body: {"messages": [{role, content}...], "model": "gemini-3.5-flash"}
-    POST /v1/deep-research      → {report, sources, plan, questions}
-        body: {"topic": "...", "max_questions": 3, "model": "gemini-3.5-flash"}
-        ⚠ takes 1–5 minutes (call from a background job, not the HTTP request path)
+    GET  /health                → {ok, backend, available, backend_info}
+    POST /v1/chat               → {reply, model, usage, error}   (plugin /deep-style)
+    POST /v1/chat/completions   → OpenAI-compatible (stream + non-stream, tools)
+    POST /v1/deep-research      → {report, sources, plan, ...}
 
-Backend: the same pluggable layer as the CLI demo (agy = live Google Search,
-direct = knowledge-only, mock = offline). Choose with --backend.
-
-Usage:
-    BRIDGE_TOKEN=secret python3 bridge/server.py --port 8787
+Backend: agy (live search) / direct (knowledge + tools) / mock. Choose with
+--backend. The direct backend sends the Antigravity client headers, which the
+internal API requires for tool/function-call requests.
 """
 
 from __future__ import annotations
@@ -36,7 +32,7 @@ from deep_research import run_research  # noqa: E402
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "GeminiBridge/0.1"
+    server_version = "GeminiBridge/0.2"
     backend = None
     token = ""
 
@@ -60,6 +56,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if not self.token:
             return True
         return self.headers.get("Authorization") == f"Bearer {self.token}"
+
+    def _error(self, code: int, message: str, err_type: str = "api_error") -> None:
+        self._send(code, {"error": {"message": message, "type": err_type, "param": None, "code": None}})
 
     # ── routes ──────────────────────────────────────────────────────────────
     def do_GET(self):
@@ -110,15 +109,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
             "duration_seconds": round(time.time() - t0, 1),
         })
 
-    # ── OpenAI-compatible chat completions (for Discourse AI) ───────────────
+    # ── OpenAI-compatible chat completions ──────────────────────────────────
     def _chat_completions(self, body: dict) -> None:
         messages = body.get("messages") or []
         model = body.get("model") or "gemini-3.5-flash"
         tools = body.get("tools")
         tool_choice = body.get("tool_choice")
         if not messages:
-            self._send(400, {"error": {"message": "messages required",
-                                       "type": "invalid_request_error", "param": None, "code": None}})
+            self._error(400, "messages required", "invalid_request_error")
             return
         if body.get("stream"):
             self._stream_completions(messages, model, tools=tools, tool_choice=tool_choice)
@@ -127,10 +125,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
         try:
             result = self.backend.chat_messages(messages, model=model, tools=tools, tool_choice=tool_choice)
         except Exception as e:  # noqa: BLE001
-            self._send(500, {"error": {"message": str(e), "type": "server_error", "param": None, "code": None}})
+            self._error(500, str(e), "server_error")
             return
         if result.error:
-            self._send(502, {"error": {"message": result.error, "type": "upstream_error", "param": None, "code": None}})
+            self._error(502, result.error, "upstream_error")
             return
 
         usage = result.usage or {}
@@ -254,20 +252,20 @@ def main() -> int:
     ap.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
     ap.add_argument("--backend", choices=["agy", "direct", "gemini", "mock"],
                     default=os.environ.get("BACKEND"))
+    ap.add_argument("--token", default=os.environ.get("BRIDGE_TOKEN", ""))
     args = ap.parse_args()
 
     BridgeHandler.backend = pick_backend(args.backend)
-    BridgeHandler.token = os.environ.get("BRIDGE_TOKEN", "")
-    b = BridgeHandler.backend
-    print(f"[bridge] backend: {b.name} — {b.describe()}", flush=True)
-    print(f"[bridge] auth: {'token required' if BridgeHandler.token else 'open (no token)'}", flush=True)
+    BridgeHandler.token = args.token
 
-    server = ThreadingHTTPServer((args.host, args.port), BridgeHandler)
-    print(f"[bridge] listening on http://{args.host}:{args.port}", flush=True)
+    sys.stderr.write(f"[bridge] backend: {getattr(BridgeHandler.backend, 'describe', lambda: '')()}\n")
+    sys.stderr.write(f"[bridge] auth: {'token required' if args.token else 'open'}\n")
+    httpd = ThreadingHTTPServer((args.host, args.port), BridgeHandler)
+    sys.stderr.write(f"[bridge] listening on http://{args.host}:{args.port}\n")
     try:
-        server.serve_forever()
+        httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n[bridge] bye")
+        pass
     return 0
 
 

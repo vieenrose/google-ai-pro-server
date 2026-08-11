@@ -344,11 +344,16 @@ class DirectTokenBackend:
                 if content is not None:
                     system_parts.append({"text": str(content)})
             elif role == "tool":
-                # tool result from a previous call -> functionResponse
+                # tool result from a previous call -> functionResponse (role: function)
                 name = (m.get("name") or m.get("tool_call_id") or "tool")
                 payload = content if content is not None else ""
-                contents.append({"role": "user",
-                                 "parts": [{"functionResponse": {"name": name, "response": {"result": payload}}}]})
+                try:
+                    parsed = json.loads(payload) if isinstance(payload, str) else payload
+                    response_obj = parsed if isinstance(parsed, dict) else {"result": parsed}
+                except Exception:
+                    response_obj = {"result": payload}
+                fr = {"name": name, "response": response_obj}
+                contents.append({"role": "function", "parts": [{"functionResponse": fr}]})
             elif role == "assistant":
                 tc = (m or {}).get("tool_calls") or []
                 parts = []
@@ -360,14 +365,25 @@ class DirectTokenBackend:
                         args = json.loads(fn.get("arguments") or "{}")
                     except Exception:
                         args = {}
-                    parts.append({"functionCall": {"name": fn.get("name", ""), "args": args}})
+                    fc_obj = {"name": fn.get("name", ""), "args": args}
+                    call_id = call.get("id", "") if isinstance(call, dict) else ""
+                    if call_id and call_id.startswith("call_"):
+                        fc_obj["id"] = call_id[5:].split("|")[0]
+                    part_obj = {"functionCall": fc_obj}
+                    # sentinel required by the API validator for functionCall parts
+                    part_obj["thoughtSignature"] = "skip_thought_signature_validator"
+                    parts.append(part_obj)
                 contents.append({"role": "model", "parts": parts or [{"text": ""}]})
             else:
                 if content is not None:
                     contents.append({"role": "user", "parts": [{"text": str(content)}]})
+        default_system = DEFAULT_SYSTEM_INSTRUCTION
+        if tools and not system_parts:
+            # tools present + no user system prompt: allow tool use
+            default_system = "You are a helpful AI assistant. Use the provided tools when they help answer the user."
         inner = {
             "contents": contents or [{"role": "user", "parts": [{"text": "hi"}]}],
-            "systemInstruction": {"parts": system_parts or [{"text": DEFAULT_SYSTEM_INSTRUCTION}]},
+            "systemInstruction": {"parts": system_parts or [{"text": default_system}]},
             "generationConfig": {},
             "safetySettings": [
                 {"category": c, "threshold": "BLOCK_NONE"}
@@ -375,7 +391,7 @@ class DirectTokenBackend:
                           "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")
             ],
         }
-        # OpenAI tools -> Gemini functionDeclarations (only gemini-2.5-pro supports them)
+        # OpenAI tools -> Gemini functionDeclarations
         if tools:
             decls = []
             for t in tools:

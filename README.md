@@ -102,22 +102,21 @@ Model names are the **alias keys** you put in the discourse-ai LLM record
 
 | Alias (use in discourse-ai) | Works on direct | Tool calling | Notes |
 |---|---|---|---|
-| `gemini-3.6-flash` (+ `-low`, `-medium`, `-high`) | ✅ | ❌ | newest flash line |
-| `gemini-3.5-flash` (+ `-low`) | ✅ | ❌ | default chat model |
-| `gemini-3-flash` | ✅ | ❌ | |
-| `gemini-3.1-pro` (+ `-low`, `-high`) | ✅ | ❌ | |
+| `gemini-3.6-flash` (+ `-low`, `-medium`, `-high`) | ✅ | ✅ | newest flash line |
+| `gemini-3.5-flash` (+ `-low`) | ✅ | ✅ | default chat model |
+| `gemini-3-flash` | ✅ | ✅ | |
+| `gemini-3.1-pro` (+ `-low`, `-high`) | ✅ | ✅ | |
 | `gemini-2.5-flash` | ✅ | ✅ | **recommended tool-capable model** |
 | `gemini-2.5-pro` | ✅* | ✅ | \* frequent `503 MODEL_CAPACITY_EXHAUSTED` |
-| `claude-sonnet-4-6` | ✅ | ❌ | |
-| `claude-opus-4-6-thinking` | ✅ | ❌ | |
+| `claude-sonnet-4-6` | ✅ | ✅ | |
+| `claude-opus-4-6-thinking` | ✅ | ✅ | |
 | `gpt-oss-120b` | ❌ 404 | – | not served on direct |
 | `gemini-3.5-flash-lite` | ❌ 404 | – | exists in agy picker, not on direct API |
 | `gemini-3.1-flash-lite-preview` | ❌ 404 | – | |
 
 Notes:
-- "Tool calling" means the model accepts `functionDeclarations` on the internal
-  API (other models return 404 when `tools` is present). Only
-  `gemini-2.5-flash` / `gemini-2.5-pro` support it.
+- "Tool calling" works on all listed models through the bridge (client headers
+  + tool-friendly system prompt are applied automatically).
 - `gemini-2.5-pro` is the full-size tool-capable model but is frequently
   capacity-exhausted (503); `gemini-2.5-flash` is the reliable default for
   tool-based agents.
@@ -134,9 +133,9 @@ bridge endpoint.
 |---|---|---|---|---|
 | Streaming chat (OpenAI-compat) | ✅ | ✅ | ✅ | ✅ |
 | Multi-turn conversation memory | ✅ | ✅ | ✅ | ✅ |
-| **Tool calling** (functionDeclarations) | ❌ (404) | ✅ | ✅ (frequent 503) | ✅ |
-| **Forum research** (search tool + citations) | ❌ | ✅ | ✅ | ✅ |
-| **Web search tool** (discourse-ai / Google CSE) | ❌ | ✅ \* | ✅ \* | ✅ \* |
+| **Tool calling** (functionDeclarations) | ✅ | ✅ | ✅ (frequent 503) | ✅ |
+| **Forum research** (search tool + citations) | ✅ | ✅ | ✅ | ✅ |
+| **Web search tool** (discourse-ai / Google CSE) | ✅ \* | ✅ \* | ✅ \* | ✅ \* |
 | Live Google Search **grounding** (in-model) | ❌ | ❌ | ❌ | ✅ |
 | Topic summaries / AI Helper | ✅ | ✅ | ✅ | ✅ |
 | Deep Research (3-phase workflow) | ✅ knowledge | ✅ | ✅ | ✅ live search |
@@ -150,10 +149,13 @@ the *tool calling* works, the search backend is a separate credential.
 - Tool-based agents (Forum Researcher, Web Researcher) → `gemini-2.5-flash`
   or `gemini-2.5-pro` — register a second LLM record pointing at the same
   bridge URL with `name: gemini-2.5-flash`.
-- Only `gemini-2.5-pro` / `gemini-2.5-flash` accept `tools` on the direct API
-  (all other aliases → HTTP 404). `gemini-2.5-pro` is frequently
-  capacity-exhausted (HTTP 503 `MODEL_CAPACITY_EXHAUSTED`), so
-  `gemini-2.5-flash` is the recommended tool-capable default.
+- Tool calling works on **every** model when the request carries the Antigravity
+  client headers (`User-Agent` / `X-Goog-Api-Client` / `Client-Metadata`) and a
+  tool-friendly system prompt — the bridge sends both automatically.
+  (Earlier reports of 404 on non-2.5 models were a missing-header artifact of
+  the test harness.) `gemini-2.5-pro` is frequently capacity-exhausted
+  (HTTP 503 `MODEL_CAPACITY_EXHAUSTED`), so `gemini-2.5-flash` is the reliable
+  tool-capable default.
 - The `agy` backend is the *only* path to authentic Google Search grounding
   (official Gemini-app-style answers), but it requires interactive/keyring
   auth — not headless-friendly on a server.
