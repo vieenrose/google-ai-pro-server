@@ -286,16 +286,67 @@ class DirectTokenBackend:
             "requestId": f"agent-{uuid.uuid4().hex}",
         }
 
-    def _generate(self, prompt: str, model: str) -> dict:
-        body = json.dumps(self._envelope(prompt, model)).encode()
+    def chat_messages(self, messages, model: str = "gemini-3.5-flash", stream: bool = False):
+        """OpenAI-style [{role, content}] -> Gemini. Returns ChatResult (non-stream)."""
+        try:
+            resp = self._generate_envelope(self._envelope_messages(messages, model))
+        except Exception as e:  # noqa: BLE001
+            return ChatResult(text="", error=str(e))
+        text, usage = _gemini_response_to_text(resp)
+        return ChatResult(text=text, model=model, usage=usage, raw=resp)
+
+    def chat_messages_stream(self, messages, model: str = "gemini-3.5-flash"):
+        """OpenAI-style [{role, content}] -> yields (delta, meta) tuples (streaming)."""
+        for event in self._generate_stream_envelope(self._envelope_messages(messages, model)):
+            for part in (event.get("candidates") or [{}])[0].get("content", {}).get("parts", []) or []:
+                if part.get("text"):
+                    yield part["text"], {"type": "text"}
+            usage = event.get("usageMetadata")
+            if usage:
+                yield "", {"usage": usage}
+
+    def _envelope_messages(self, messages, model: str) -> dict:
+        system_parts, contents = [], []
+        for m in messages:
+            role = (m or {}).get("role", "user")
+            content = (m or {}).get("content")
+            if content is None:
+                continue
+            if role == "system":
+                system_parts.append({"text": str(content)})
+            elif role == "assistant":
+                contents.append({"role": "model", "parts": [{"text": str(content)}]})
+            else:
+                contents.append({"role": "user", "parts": [{"text": str(content)}]})
+        inner = {
+            "contents": contents or [{"role": "user", "parts": [{"text": "hi"}]}],
+            "systemInstruction": {"parts": system_parts or [{"text": DEFAULT_SYSTEM_INSTRUCTION}]},
+            "generationConfig": {},
+            "safetySettings": [
+                {"category": c, "threshold": "BLOCK_NONE"}
+                for c in ("HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
+                          "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT")
+            ],
+        }
+        return {
+            "project": self._project(),
+            "model": AgyBackend.MODEL_ALIASES.get(model, model),
+            "request": inner,
+            "requestType": "agent",
+            "userAgent": "antigravity",
+            "requestId": f"agent-{uuid.uuid4().hex}",
+        }
+
+    def _generate_envelope(self, envelope: dict) -> dict:
+        body = json.dumps(envelope).encode()
         status, raw = _http_post(f"{CLOUDCODE_BASE}/v1internal:generateContent", body, self._access_token())
         if status != 200:
             raise RuntimeError(f"cloudcode generateContent HTTP {status}: {raw[:400]}")
         payload = json.loads(raw)
         return payload.get("response", payload)
 
-    def _generate_stream(self, prompt: str, model: str):
-        body = json.dumps(self._envelope(prompt, model)).encode()
+    def _generate_stream_envelope(self, envelope: dict):
+        body = json.dumps(envelope).encode()
         for status, data in _http_post_stream(f"{CLOUDCODE_BASE}/v1internal:streamGenerateContent?alt=sse",
                                               body, self._access_token()):
             if status != 200:
@@ -305,6 +356,12 @@ class DirectTokenBackend:
             inner = payload.get("response", payload)
             if inner:
                 yield inner
+
+    def _generate(self, prompt: str, model: str) -> dict:
+        return self._generate_envelope(self._envelope(prompt, model))
+
+    def _generate_stream(self, prompt: str, model: str):
+        yield from self._generate_stream_envelope(self._envelope(prompt, model))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

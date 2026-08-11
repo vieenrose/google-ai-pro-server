@@ -25,6 +25,7 @@ import json
 import os
 import sys
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -83,7 +84,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._send(400, {"error": "invalid JSON"})
             return
 
-        if self.path == "/v1/chat":
+        if self.path == "/v1/chat/completions":
+            self._chat_completions(body)
+        elif self.path == "/v1/chat":
             self._chat(body)
         elif self.path == "/v1/deep-research":
             self._deep_research(body)
@@ -106,6 +109,89 @@ class BridgeHandler(BaseHTTPRequestHandler):
             "error": result.error or None,
             "duration_seconds": round(time.time() - t0, 1),
         })
+
+    # ── OpenAI-compatible chat completions (for Discourse AI) ───────────────
+    def _chat_completions(self, body: dict) -> None:
+        messages = body.get("messages") or []
+        model = body.get("model") or "gemini-3.5-flash"
+        if not messages:
+            self._send(400, {"error": {"message": "messages required",
+                                       "type": "invalid_request_error", "param": None, "code": None}})
+            return
+        if body.get("stream"):
+            self._stream_completions(messages, model)
+            return
+
+        try:
+            result = self.backend.chat_messages(messages, model=model)
+        except Exception as e:  # noqa: BLE001
+            self._send(500, {"error": {"message": str(e), "type": "server_error", "param": None, "code": None}})
+            return
+        if result.error:
+            self._send(502, {"error": {"message": result.error, "type": "upstream_error", "param": None, "code": None}})
+            return
+
+        usage = result.usage or {}
+        resp = {
+            "id": f"chatcmpl-{uuid.uuid4().hex}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": result.model or model,
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": result.text},
+                "finish_reason": "stop",
+            }],
+            "usage": {
+                "prompt_tokens": usage.get("promptTokenCount", 0),
+                "completion_tokens": usage.get("candidatesTokenCount", 0),
+                "total_tokens": usage.get("totalTokenCount", 0),
+            },
+        }
+        self._send(200, resp)
+
+    def _stream_completions(self, messages, model) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        # no Content-Length, no keep-alive -> connection closes at end of stream,
+        # so HTTP clients (Net::HTTP etc.) see EOF and stop reading.
+        self.close_connection = True
+        self.end_headers()
+
+        def chunk(delta_text=None, finish=None, role_done=False):
+            delta = {}
+            if role_done:
+                delta["role"] = "assistant"
+            if delta_text:
+                delta["content"] = delta_text
+            d = {
+                "id": f"chatcmpl-{uuid.uuid4().hex}",
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+            }
+            self.wfile.write(f"data: {json.dumps(d)}\n\n".encode())
+            self.wfile.flush()
+
+        try:
+            chunk(role_done=True)
+            for delta, _meta in self.backend.chat_messages_stream(messages, model=model):
+                if delta:
+                    chunk(delta_text=delta)
+            chunk(finish="stop")
+        except Exception as e:  # noqa: BLE001
+            try:
+                chunk(delta_text=f"\n\n[bridge error: {e}]", finish="stop")
+            except Exception:
+                pass
+        try:
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+        except Exception:
+            pass
 
     def _deep_research(self, body: dict) -> None:
         topic = body.get("topic") or ""
