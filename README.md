@@ -94,6 +94,36 @@ Then users just post:
 /deep fusion energy 2026           → Gemini posts a cited research report
 ```
 
+## Available models (verified on the AI Pro direct backend)
+
+Model names are the **alias keys** you put in the discourse-ai LLM record
+(`name:` field); the bridge maps them to the Antigravity API. Verified
+2026-08-11 with live calls.
+
+| Alias (use in discourse-ai) | Works on direct | Tool calling | Notes |
+|---|---|---|---|
+| `gemini-3.6-flash` (+ `-low`, `-medium`, `-high`) | ✅ | ❌ | newest flash line |
+| `gemini-3.5-flash` (+ `-low`) | ✅ | ❌ | default chat model |
+| `gemini-3-flash` | ✅ | ❌ | |
+| `gemini-3.1-pro` (+ `-low`, `-high`) | ✅ | ❌ | |
+| `gemini-2.5-flash` | ✅ | ✅ | **recommended tool-capable model** |
+| `gemini-2.5-pro` | ✅* | ✅ | \* frequent `503 MODEL_CAPACITY_EXHAUSTED` |
+| `claude-sonnet-4-6` | ✅ | ❌ | |
+| `claude-opus-4-6-thinking` | ✅ | ❌ | |
+| `gpt-oss-120b` | ❌ 404 | – | not served on direct |
+| `gemini-3.5-flash-lite` | ❌ 404 | – | exists in agy picker, not on direct API |
+| `gemini-3.1-flash-lite-preview` | ❌ 404 | – | |
+
+Notes:
+- "Tool calling" means the model accepts `functionDeclarations` on the internal
+  API (other models return 404 when `tools` is present). Only
+  `gemini-2.5-flash` / `gemini-2.5-pro` support it.
+- `gemini-2.5-pro` is the full-size tool-capable model but is frequently
+  capacity-exhausted (503); `gemini-2.5-flash` is the reliable default for
+  tool-based agents.
+- The `agy` interactive picker may show more names (e.g. lite variants) that
+  are not servable through the `direct` backend.
+
 ## Feature matrix by model ⚡
 
 Capabilities depend heavily on *which model* and *which backend* you use.
