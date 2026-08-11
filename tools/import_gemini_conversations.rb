@@ -16,11 +16,23 @@
 require "json"
 require "time"
 
-LUIGI = User.find_by(username: "luigi")
+LUIGI = User.find_by(username: "admin")
 GEMINI = User.find_by(username: "gemini")
 abort "missing users" if LUIGI.nil? || GEMINI.nil?
 
 CAT = Category.find_by(name: "Gemini 匯入") || Category.create!(name: "Gemini 匯入", color: "6C47D6", text_color: "FFFFFF", user: LUIGI)
+
+# model display name -> @ai_<slug> agent (the Poe-style model picker)
+MODEL_TO_AI = {
+  "Gemini" => "ai_gemini_3_5_flash",
+  "Gemini 3.6 Flash" => "ai_gemini_3_6_flash",
+  "Gemini 3.5 Flash" => "ai_gemini_3_5_flash",
+  "Gemini 3.1 Pro" => "ai_gemini_3_1_pro",
+  "Gemini 2.5 Flash" => "ai_gemini_2_5_flash",
+  "Gemini 2.5 Pro" => "ai_gemini_2_5_pro",
+  "Claude Sonnet 4.6" => "ai_claude_sonnet_4_6",
+  "Claude Opus 4.6" => "ai_claude_opus_4_6",
+}
 puts "category: #{CAT.id}"
 
 def sanitize_tag(s)
@@ -92,6 +104,12 @@ files.each do |f|
       raw = content_to_raw(it["contents"])
       next if raw.blank?
       author = it["role"] == "assistant" ? GEMINI : LUIGI
+      # Poe-style convention: prefix user requests with @ai_<model-slug>
+      if it["role"] != "assistant"
+        model = it["displayModel"] || it["model"] || "Gemini"
+        slug = MODEL_TO_AI[model] || "ai_gemini_3_5_flash"
+        raw = "@#{slug} #{raw}"
+      end
       ts = it["created_at"].to_s
       PostCreator.create!(
         author,
