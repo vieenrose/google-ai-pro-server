@@ -14,6 +14,7 @@ module ::Jobs
       DiscourseGemini.post_as_bot(
         topic_id: post.topic_id,
         raw: I18n.t("discourse_gemini.deep_started"),
+        username: "deep-research",
       )
 
       result = GeminiBridge.new.deep_research(
@@ -37,7 +38,7 @@ module ::Jobs
         MD
       end
 
-      DiscourseGemini.post_as_bot(topic_id: post.topic_id, raw: raw)
+      DiscourseGemini.post_as_bot(topic_id: post.topic_id, raw: raw, username: "deep-research")
     end
   end
 end

@@ -84,14 +84,16 @@ def build_auth_url(verifier: str) -> str:
 
 
 def exchange_code(code: str, verifier: str) -> dict:
-    body = urllib.parse.urlencode({
+    params = {
         "code": code,
         "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
         "redirect_uri": REDIRECT_URI,
         "grant_type": "authorization_code",
         "code_verifier": verifier,
-    }).encode()
+    }
+    if CLIENT_SECRET:
+        params["client_secret"] = CLIENT_SECRET
+    body = urllib.parse.urlencode(params).encode()
     req = urllib.request.Request(TOKEN_URL, data=body, method="POST")
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
     try:
@@ -190,12 +192,8 @@ def main() -> int:
             return 1
 
     print("3) Exchanging code for tokens…")
-    if not auth_agy.CLIENT_SECRET:
-        print("✖ ANTIGRAVITY_CLIENT_SECRET env var is not set.")
-        print("  Get it from the community proxy repo (usamashehab/antigravity-proxy)"
-              " or extract it from the agy binary, then:"
-              "  export ANTIGRAVITY_CLIENT_SECRET=...")
-        return 1
+    if not CLIENT_SECRET:
+        print("(no client secret - using public-client PKCE flow)")
     try:
         payload = exchange_code(code, verifier)
     except Exception as e:  # noqa: BLE001

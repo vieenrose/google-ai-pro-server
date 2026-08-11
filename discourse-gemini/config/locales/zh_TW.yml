@@ -1,0 +1,13 @@
+zh_TW:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          discourse_gemini: "Discourse Gemini"
+  discourse_gemini:
+    not_allowed: "⚠️ 你沒有權限在此論壇呼喚 Gemini。"
+    rate_limited: "⚠️ 你已達到今日的 Gemini 使用上限，請明天再試。"
+    error: "⚠️ Gemini 發生錯誤：%{error}"
+    deep_started: "🧪 Deep Research 已開始——這需要幾分鐘。完成後 Gemini 會在此張貼報告。"
+    deep_report_title: "Gemini Deep Research：%{topic}"
+    chat_prefix: "🤖 **Gemini**"

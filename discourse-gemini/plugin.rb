@@ -16,10 +16,11 @@ register_asset "stylesheets/gemini.scss"
 
 load File.expand_path("../lib/gemini_bridge.rb", __FILE__)
 
-# load jobs explicitly (works across Discourse versions)
-Dir["#{__dir__}/jobs/**/*.rb"].each { |f| load f }
+# jobs auto-load via Discourse plugin job autoloading
 
 after_initialize do
+  # load jobs now that Jobs::Base exists
+  Dir["#{__dir__}/jobs/**/*.rb"].each { |f| load f }
   # ── bot user ──────────────────────────────────────────────────────────────
   # We avoid relying on the `users.bot` column (not present in all Discourse
   # versions) and instead mark the bot with a custom field + username check.
@@ -96,8 +97,10 @@ after_initialize do
       PluginStore.set("discourse_gemini", key, used + count)
     end
 
-    def self.post_as_bot(topic_id:, raw:, title: nil)
-      bot = User.find_by(username: SiteSetting.gemini_bot_username) || Discourse.system_user
+    def self.post_as_bot(topic_id:, raw:, title: nil, username: nil)
+      bot =
+        User.find_by(username: username.presence || SiteSetting.gemini_bot_username) ||
+          Discourse.system_user
       cooked = "<div class=\"discourse-gemini-bot-post\">\n\n#{raw}\n\n</div>"
       PostCreator.new(
         bot,
@@ -124,6 +127,33 @@ after_initialize do
       Jobs.enqueue(kind == "deep" ? :gemini_deep_research : :gemini_reply, args)
     end
 
+    def self.ensure_deep_research_bot!
+      username = "deep-research"
+      user = User.find_by(username: username)
+      return user if user
+      begin
+        User.transaction do
+          user = User.create!(
+            username: username,
+            name: "Deep Research",
+            email: "#{username}@discourse-gemini.invalid",
+            active: true,
+            approved: true,
+            trust_level: TrustLevel.levels[:leader],
+          )
+          user.activate
+        end
+        user.custom_fields[BOT_FIELD] = true
+        user.save_custom_fields
+        if User.column_names.include?("bot")
+          user.update_columns(bot: true)
+        end
+      rescue ActiveRecord::RecordInvalid, PG::UniqueViolation
+        user = User.find_by(username: username)
+      end
+      user
+    end
+
     def self.gemini_bot?(user)
       return false if user.blank?
       user.id == Discourse::SYSTEM_USER_ID ||
@@ -132,13 +162,17 @@ after_initialize do
     end
   end
 
-  # ── trigger: detect @gemini / /deep in new posts ──────────────────────────
+  ::DiscourseGemini.ensure_deep_research_bot!
+
+  # ── trigger: detect @gemini / @deep-research / /deep in new posts ─────────
   on(:post_created) do |post, _opts, user|
     next unless SiteSetting.gemini_enabled
     next if user.blank? || DiscourseGemini.gemini_bot?(user)
     raw = post.raw.to_s
 
-    if raw =~ /\A\/deep\s+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
+    if raw =~ /\A@deep-research[:\s]+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
+      DiscourseGemini.run_job(user, post, "deep", { topic: $1.strip })
+    elsif raw =~ /\A\/deep\s+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
       DiscourseGemini.run_job(user, post, "deep", { topic: $1.strip })
     elsif raw =~ /\A@gemini[:\s]+(.+)\z/m
       DiscourseGemini.run_job(user, post, "chat", { prompt: $1.strip })

@@ -1,0 +1,6 @@
+zh_TW:
+  admin_js:
+    admin:
+      site_settings:
+        categories:
+          discourse_gemini: "Discourse Gemini"
