@@ -21,10 +21,17 @@ Dir["#{__dir__}/jobs/**/*.rb"].each { |f| load f }
 
 after_initialize do
   # ── bot user ──────────────────────────────────────────────────────────────
+  # We avoid relying on the `users.bot` column (not present in all Discourse
+  # versions) and instead mark the bot with a custom field + username check.
+  BOT_FIELD = "discourse_gemini_bot"
+
   def create_gemini_bot!
     username = SiteSetting.gemini_bot_username.presence || "gemini"
     user = User.find_by(username: username)
-    return user if user
+    if user
+      mark_as_bot(user)
+      return user
+    end
     begin
       User.transaction do
         user = User.create!(
@@ -34,28 +41,41 @@ after_initialize do
           active: true,
           approved: true,
           trust_level: TrustLevel.levels[:leader],
-          bot: true,
         )
         user.activate
       end
+      mark_as_bot(user)
     rescue ActiveRecord::RecordInvalid, PG::UniqueViolation
       user = User.find_by(username: username) || Discourse.system_user
     end
     user
   end
 
-  gemini_bot = create_gemini_bot!
-  if gemini_bot
-    DiscourseEvent.on(:user_created) do |user|
-      next unless user.username == SiteSetting.gemini_bot_username
-      user.update!(bot: true) unless user.bot
+  def mark_as_bot(user)
+    user.custom_fields[BOT_FIELD] = true
+    user.save_custom_fields
+    # newer Discourse exposes a real `bot` column — set it when available
+    if User.column_names.include?("bot")
+      user.update_columns(bot: true)
     end
+  rescue StandardError
+    # custom_fields may not be saved for system user — that's fine
   end
+
+  def gemini_bot?(user)
+    return false if user.blank?
+    user.id == Discourse::SYSTEM_USER_ID ||
+      user.username == SiteSetting.gemini_bot_username.to_s ||
+      user.custom_fields[BOT_FIELD] == true
+  end
+
+  create_gemini_bot!
 
   # ── permission + rate-limit helpers ───────────────────────────────────────
   module ::DiscourseGemini
     def self.allowed_for?(user)
-      return false if user.blank? || user.bot?
+      return false if user.blank?
+      return false if gemini_bot?(user)
       groups = SiteSetting.gemini_allowed_groups
       return true if groups.blank?
       group_ids = Group.where(name: groups.split("|")).pluck(:id)
@@ -103,13 +123,20 @@ after_initialize do
       args = payload.merge(post_id: post.id, kind: kind)
       Jobs.enqueue(kind == "deep" ? :gemini_deep_research : :gemini_reply, args)
     end
+
+    def self.gemini_bot?(user)
+      return false if user.blank?
+      user.id == Discourse::SYSTEM_USER_ID ||
+        user.username == SiteSetting.gemini_bot_username.to_s ||
+        user.custom_fields[BOT_FIELD] == true
+    end
   end
 
   # ── trigger: detect @gemini / /deep in new posts ──────────────────────────
   on(:post_created) do |post, _opts, user|
     next unless SiteSetting.gemini_enabled
-    next if post.user&.bot? || user.blank?
-    raw = post.raw
+    next if user.blank? || DiscourseGemini.gemini_bot?(user)
+    raw = post.raw.to_s
 
     if raw =~ /\A\/deep\s+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
       DiscourseGemini.run_job(user, post, "deep", { topic: $1.strip })

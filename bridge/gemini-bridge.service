@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+#
+# gemini-bridge.service — systemd unit for the Gemini AI Pro bridge.
+#
+# Install:
+#   sudo cp gemini-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gemini-bridge
+#
+# Check:  sudo journalctl -u gemini-bridge -f
+#
+# Requires: agy installed + signed in (run `agy` once interactively), and
+# the token in the environment or the bridge running as your user
+# (the OAuth token lives in ~/.gemini and the OS keyring).
+
+[Unit]
+Description=Gemini AI Pro bridge (Discourse plugin backend)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Run as your own user so agy can read ~/.gemini + the keyring
+User=%i
+WorkingDirectory=/opt/google-ai-pro-server
+Environment=BRIDGE_TOKEN=change-me
+Environment=BACKEND=agy
+ExecStart=/usr/bin/python3 /opt/google-ai-pro-server/bridge/server.py --port 8787
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

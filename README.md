@@ -3,47 +3,49 @@
 **Chat with Gemini and run Deep Research using only your Google AI Pro
 subscription — no Gemini API key, no API billing.**
 
-This repo contains a working Python demo (step 1 of a plan to build a
-Discourse plugin that lets forum users summon Gemini into a topic or trigger
-Deep Research).
+A complete stack: a **Python CLI demo**, a zero-dependency **HTTP bridge**, and
+a **Discourse plugin** that lets forum users summon Gemini (`@gemini …`) or
+trigger Deep Research (`/deep …`).
 
 ## Status: ✅ live-verified (2026-08-11)
 
-Tested end-to-end against a real Google account via the Antigravity backend:
+Tested end-to-end against a real Google AI Pro account — chat and Deep Research
+both work with **authentic Google Search grounding** (the same
+`grounding-api-redirect` grounding the Gemini app uses):
 
 ```
-$ python3 cli.py --backend direct "Say hello"
-gemini> Hello from Gemini, it's great to meet you!
+$ python3 cli.py --backend agy "Say hello"
+gemini> Hello! It is a pleasure to meet you…
 
-$ python3 cli.py --backend direct --max-questions 2 --deep "fusion energy…"
+$ python3 cli.py --backend agy --deep "major world events August 2026"
   ▸ Phase 1/3 — planning research on: …
-  ▸ Phase 2/3 — researching question 1/2: …
-  ▸ Phase 2/3 — researching question 2/2: …
+  ▸ Phase 2/3 — researching question 1/1: …
   ▸ Phase 3/3 — synthesizing the final report…
-✔ Report complete — 4 question(s), 13 source(s), 48s
-# Comprehensive Research Report: … (with inline citations [1]…[13])
+✔ Report complete — 4 question(s), 26 source(s), 51s
+# Global Political and Diplomatic Developments Report…
+# (Mecca defense pact, US–Brazil visa dispute, Vietnam–Australia visit…)
 ```
 
-## How it works
+## Architecture
+
+```
+Forum user  →  Discourse plugin (Ruby)  →  bridge (Python, localhost:8787)
+                                              │
+                    @gemini … → /v1/chat ─────┤
+                    /deep …   → /v1/deep-research ─────┤
+                                              │
+                                              ▼
+                              agy (Antigravity CLI, AI Pro OAuth)
+                                              │
+                              real Gemini — authentic Google Search grounding
+```
 
 | Layer | What it is |
 |---|---|
-| **Google AI Pro subscription** | Consumer subscription. Powers Gemini in the app, AI Studio, and the Antigravity CLI. **It does NOT grant Gemini API access** (billed separately). |
-| **Antigravity CLI (`agy`)** | Google's official CLI (successor of Gemini CLI). Signs in with your Google account once (OAuth), then runs headless. |
-| **Direct backend** | Talks to Google's internal Antigravity / Cloud Code Assist API (`cloudcode-pa.googleapis.com`) using the OAuth token `agy` caches. Technique recycled (MIT) from the community proxy. |
-| **Deep Research workflow** | 3-phase research: plan → gather → synthesize, on the subscription backend. |
-
-```
-OpenAI-style client / REPL
-        │
-        ▼
-┌──────────────────────────────────────────┐
-│ demo/cli.py                              │
-│  chat mode  → agy token → generateContent│
-│  /deep mode → 3-phase research workflow  │
-│  backends: direct · agy · gemini · mock  │
-└──────────────────────────────────────────┘
-```
+| **Google AI Pro subscription** | Consumer subscription. Powers Gemini in the app and the Antigravity CLI. **It does NOT grant Gemini API access** (that's billed separately). |
+| **Antigravity CLI (`agy`)** | Google's official CLI. Signs in once with your Google account (browser OAuth), then runs headless. The full agent has **live Google Search grounding**. |
+| **Direct backend** *(optional)* | Talks to Google's internal Antigravity API using the OAuth token `agy` caches (community technique, recycled from an MIT proxy). Knowledge-only — no live search. |
+| **Deep Research workflow** | 3-phase research: plan → gather → synthesize, with real search grounding when using the `agy` backend. |
 
 ## Quick start
 
@@ -51,19 +53,45 @@ OpenAI-style client / REPL
 # 1. Install Antigravity CLI and sign in once with your AI Pro Google account
 curl -fsSL https://antigravity.google/cli/install.sh | bash
 agy
+#    browser opens → sign in → copy code from redirect → paste INTO the agy terminal
 
-# 2. Run the demo (auto-selects the best backend)
+# 2. Run the demo CLI (agy is auto-selected, live search enabled)
 cd demo
 python3 cli.py "hello"                                  # one-shot chat
 python3 cli.py --deep "quantum computing trends 2026"   # deep research
 python3 cli.py                                          # interactive REPL
 ```
 
-If `agy` isn't available on your machine, use the manual OAuth flow instead:
+If `agy` can't complete interactive auth on your machine, use the manual OAuth
+flow instead:
 
 ```bash
 python3 demo/auth_agy.py        # prints a sign-in URL, saves the token
-python3 demo/cli.py --backend direct "hello"
+python3 demo/cli.py --backend direct "hello"            # knowledge-only backend
+```
+
+## Discourse plugin (the main goal)
+
+See **[`discourse-gemini/README.md`](discourse-gemini/README.md)** for the
+complete install guide and **[`discourse-gemini/USAGE.md`](discourse-gemini/USAGE.md)**
+for the end-user commands. In short:
+
+```bash
+# on the Discourse host:
+curl -fsSL https://antigravity.google/cli/install.sh | bash && agy   # sign in once
+BRIDGE_TOKEN=change-me python3 bridge/server.py --port 8787 --backend agy   # run bridge
+
+cd /var/discourse/plugins
+git clone https://github.com/vieenrose/google-ai-pro-server.git discourse-gemini
+cd /var/discourse && ./launcher rebuild app
+# → configure bridge URL/token + allowed groups in admin settings
+```
+
+Then users just post:
+
+```
+@gemini explain async/await        → Gemini replies in-thread
+/deep fusion energy 2026           → Gemini posts a cited research report
 ```
 
 ## Honest caveats ⚠️
@@ -73,35 +101,47 @@ python3 demo/cli.py --backend direct "hello"
    restricted at any time. The `agy` CLI itself is official, but automating it
    headlessly is outside its documented support envelope.
 2. **Live search depends on the `agy` backend.** The full `agy` agent has
-   authentic Google Search grounding (verified: `grounding-api-redirect` links
-   + real current events). The `direct` backend (low-level endpoint) can only
+   authentic Google Search grounding (verified). The `direct` backend can only
    answer from training data.
 3. **Deep Research is a workflow, not the paid agent.** The true Deep Research
-   agent exists only in the Gemini app or as a *paid* API. Here it's a
-   3-phase research workflow (plan → gather → synthesize) — with real search
-   grounding when using the `agy` backend.
+   agent exists only in the Gemini app or as a *paid* API. Here it's a 3-phase
+   research workflow (plan → gather → synthesize) — with real search grounding
+   when using the `agy` backend.
 4. **Terms of service.** For personal/local use. Automating consumer
    subscriptions may violate Google's terms — don't resell or scale this.
 
 ## Repository layout
 
 ```
-├── PLAN.md                 # full architecture plan (+ Discourse plugin roadmap)
-└── demo/
-    ├── cli.py              # chat + /deep research (REPL & one-shot)
-    ├── gemini_backends.py  # direct (live) · agy · gemini · mock backends
-    ├── deep_research.py    # 3-phase research workflow
-    ├── auth_agy.py         # one-time manual OAuth sign-in (PKCE)
-    └── README.md           # demo docs
+├── PLAN.md                    # architecture plan
+├── demo/                      # CLI demo (chat + /deep)
+│   ├── cli.py                 # REPL + one-shot
+│   ├── gemini_backends.py     # agy (live) · direct · gemini · mock
+│   ├── deep_research.py       # 3-phase research workflow
+│   ├── auth_agy.py            # manual PKCE OAuth helper
+│   └── README.md
+├── bridge/                    # HTTP bridge for external apps
+│   ├── server.py              # /health, /v1/chat, /v1/deep-research
+│   ├── gemini-bridge.service  # systemd unit example
+│   └── README.md
+└── discourse-gemini/          # Discourse plugin
+    ├── plugin.rb              # triggers, bot user, permissions, limits
+    ├── lib/gemini_bridge.rb   # Ruby HTTP client
+    ├── jobs/regular/          # chat / deep-research / notice jobs
+    ├── config/                # settings + locales
+    ├── README.md              # install guide
+    └── USAGE.md               # end-user commands
 ```
 
 ## Roadmap
 
 - [x] Live chat (sync + streaming) via the subscription
-- [x] Deep Research workflow (plan → gather → synthesize) with citations
-- [ ] HTTP bridge (`/v1/chat`, `/v1/deep-research`) for external tools
-- [ ] Discourse plugin: summon Gemini into a topic, trigger Deep Research
-- [ ] Optional: live web search (execute the `google_search` tool loop)
+- [x] Deep Research workflow with citations
+- [x] Authentic Google Search via the `agy` full agent
+- [x] HTTP bridge (`/v1/chat`, `/v1/deep-research`)
+- [x] Discourse plugin: `@gemini` summon + `/deep` research
+- [ ] Streamed bot replies (progress while researching)
+- [ ] Multi-turn `@gemini` conversation chaining
 - [ ] Optional: pluggable paid-API backend for the *real* Deep Research agent
 
 ## License
