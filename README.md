@@ -156,7 +156,7 @@ OpenAI-compatible bridge endpoint. Rows marked ✅ are tested end-to-end.
 | **Web search tool** (discourse-ai / Google CSE) | ✅ \* | ✅ \* | ✅ \* | ✅ \* | ✅ \* | – | ✅ \* |
 | **Image input** (upload → Gemini sees it) | ✅ | ✅ | ✅ | ✅ | ✅ | – | ✅ |
 | **File input** (PDF etc.) | ✅ | ✅ | ✅ | ✅ | ✅ | – | ✅ |
-| **Audio input** | ❌ API 400 | ❌ | ❌ | ❌ | ❌ | – | ✅ |
+| **Audio input** | ❌ API 400 | ❌ | ❌ | ❌ | ❌ | – | ❓ unverified (voice is an app feature) |
 | **Image generation** (output) | ❌ text-only | ❌ text-only | ❌ text-only | ❌ text-only | ❌ | ✅ (429-prone) | ✅ |
 | Live Google Search **grounding** (in-model) | ❌ | ❌ | ❌ | ❌ | ❌ | – | ✅ |
 | Topic summaries / AI Helper | ✅ | ✅ | ✅ | ✅ | ✅* | – | ✅ |
@@ -166,6 +166,15 @@ OpenAI-compatible bridge endpoint. Rows marked ✅ are tested end-to-end.
 \* `gemini-2.5-pro` frequently returns `503 MODEL_CAPACITY_EXHAUSTED`.
 \*\* Web search needs a Google CSE key configured in discourse-ai (the tool
 calling works; the search backend is a separate credential).
+
+> ⚠️ **About the `agy` column:** these capabilities come from the project's
+> documented live tests (original author) + binary inspection (native image
+> generation API, model catalog, search grounding), **not from our own
+> hands-on runs** — agy requires interactive browser sign-in + OS keyring,
+> which we could not automate headless on the Pi. The `direct` column, in
+> contrast, is 100% verified end-to-end by us. Getting the `agy` row truly
+> live in the forum needs the headless-auth project (virtual keyring +
+> agy image backend in the bridge).
 
 **How to pick a model for discourse-ai agents**
 
@@ -206,6 +215,15 @@ So users **can** call the frontier image model explicitly (`@ai_gemini_image`, o
 base-model agent routes automatically), but there is **no better image model
 served on the AI Pro direct API** — the quality/429 limits are intrinsic to how
 the subscription API exposes it.
+
+> ⚠️ **About the `agy` column:** these capabilities come from the project's
+> documented live tests (original author) + binary inspection (native image
+> generation API, model catalog, search grounding), **not from our own
+> hands-on runs** — agy requires interactive browser sign-in + OS keyring,
+> which we could not automate headless on the Pi. The `direct` column, in
+> contrast, is 100% verified end-to-end by us. Getting the `agy` row truly
+> live in the forum needs the headless-auth project (virtual keyring +
+> agy image backend in the bridge).
 
 **How to pick a model for discourse-ai agents**
 
