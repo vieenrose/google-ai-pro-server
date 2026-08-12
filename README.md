@@ -144,28 +144,37 @@ with a choice of backend models — every reply is tagged with the driving model
 
 ## Feature matrix by model ⚡
 
-Capabilities depend heavily on *which model* and *which backend* you use.
-Verified 2026-08-11 against the live AI Pro direct API and the OpenAI-compatible
-bridge endpoint.
+Capabilities verified live 2026-08-12 against the AI Pro direct API and the
+OpenAI-compatible bridge endpoint. Rows marked ✅ are tested end-to-end.
 
-| Capability | gemini-3.5-flash<br/>(direct) | gemini-2.5-flash<br/>(direct) | gemini-3.1-flash-image<br/>(direct) | agy<br/>backend |
-|---|---|---|---|---|
-| Streaming chat (OpenAI-compat) | ✅ | ✅ | – | ✅ |
-| Multi-turn conversation memory | ✅ | ✅ | – | ✅ |
-| **Tool calling** (functionDeclarations) | ✅ | ✅ | – | ✅ |
-| **Forum research** (search tool + citations) | ✅ (fully working) | ✅ | – | ✅ |
-| **Web search tool** (discourse-ai / Google CSE) | ✅ \* | ✅ \* | – | ✅ \* |
-| **Image input** (upload → Gemini sees it) | ✅ | ✅ | – | ✅ |
-| **File input** (PDF etc. → Gemini reads it) | ✅ | ✅ | – | ✅ |
-| **Audio input** | ❌ (API 400) | ❌ | – | ✅ |
-| **Image generation** (output) | ❌ | ❌ | ✅ (auto-uploaded to forum) | ✅ |
-| Live Google Search **grounding** (in-model) | ❌ | ❌ | – | ✅ |
-| Topic summaries / AI Helper | ✅ | ✅ | – | ✅ |
-| Deep Research (3-phase workflow) | ✅ knowledge | ✅ | – | ✅ live search |
-| Chat (Discourse Chat DM / channel @mention) | ✅ | ✅ | ✅ | ✅ |
+| Capability | gemini-3.6-flash<br/>(frontier) | gemini-3.5-flash | gemini-3.1-pro<br/>(frontier) | gemini-2.5-flash | gemini-2.5-pro | gemini-3.1-flash-image | agy<br/>backend |
+|---|---|---|---|---|---|---|---|
+| Streaming chat (OpenAI-compat) | ✅ | ✅ | ✅ | ✅ | ✅* | – | ✅ |
+| Multi-turn conversation memory | ✅ | ✅ | ✅ | ✅ | ✅* | – | ✅ |
+| **Tool calling** (functionDeclarations) | ✅ | ✅ | ✅ | ✅ | ✅* | – | ✅ |
+| **Forum research** (search tool + citations) | ✅ | ✅ | ✅ | ✅ | ✅* | – | ✅ |
+| **Web search tool** (discourse-ai / Google CSE) | ✅ \* | ✅ \* | ✅ \* | ✅ \* | ✅ \* | – | ✅ \* |
+| **Image input** (upload → Gemini sees it) | ✅ | ✅ | ✅ | ✅ | ✅ | – | ✅ |
+| **File input** (PDF etc.) | ✅ | ✅ | ✅ | ✅ | ✅ | – | ✅ |
+| **Audio input** | ❌ API 400 | ❌ | ❌ | ❌ | ❌ | – | ✅ |
+| **Image generation** (output) | ❌ text-only | ❌ text-only | ❌ text-only | ❌ text-only | ❌ | ✅ (429-prone) | ✅ |
+| Live Google Search **grounding** (in-model) | ❌ | ❌ | ❌ | ❌ | ❌ | – | ✅ |
+| Topic summaries / AI Helper | ✅ | ✅ | ✅ | ✅ | ✅* | – | ✅ |
+| Deep Research (3-phase workflow) | ✅ knowledge | ✅ | ✅ | ✅ | ✅ | – | ✅ live |
+| Chat (Discourse Chat DM / channel @mention) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
-\* needs a web-search provider key (Google CSE) configured in discourse-ai;
-the *tool calling* works, the search backend is a separate credential.
+\* `gemini-2.5-pro` frequently returns `503 MODEL_CAPACITY_EXHAUSTED`.
+\*\* Web search needs a Google CSE key configured in discourse-ai (the tool
+calling works; the search backend is a separate credential).
+
+**How to pick a model for discourse-ai agents**
+
+- Frontier daily driver → `gemini-3.6-flash` (newest flash line, fast, tools).
+- Heavy reasoning → `gemini-3.1-pro` (larger, slower, same capabilities).
+- Tool-based agents (Forum Researcher) → `gemini-3.6-flash` or
+  `gemini-2.5-flash`; `gemini-2.5-pro` is smarter but 503-prone.
+- Image generation → `gemini-3.1-flash-image` only (routed automatically from
+  any base-model agent when the request is an image prompt).
 
 **Image generation quality (evaluated live, 2026-08-12 — prompt: "畫一張紫色的花")**
 
