@@ -248,6 +248,28 @@ the subscription API exposes it.
   `ai_<model-slug>` — typing `@ai_` in a topic or chat shows the model list.
   Every reply is tagged with the driving model (`— ⚙️ 由 <model> 驅動`).
 
+## Antigravity SDK / MCP migration status 🔬
+
+Explored 2026-08-12: the official `google-antigravity` Python SDK
+(pip, v0.1.10) exposes `Agent`, `LocalAgentConfig`, multimodal types
+(`Image`/`Audio`/`Video`), `ThinkingLevel`, tools and MCP-server
+connections — the intended replacement for the reverse-engineered
+`direct` backend.
+
+**Auth finding:** the SDK's local connection requires a
+`GEMINI_API_KEY` (env or `LocalAgentConfig(api_key=...)`) — it does
+**not** use the Google AI Pro subscription OAuth by default. So:
+
+| Path | Auth | Status |
+|---|---|---|
+| SDK + Gemini API key | API key (free tier exists) | ✅ official, reliable; separate billing |
+| SDK + AI Pro OAuth | agy CLI keyring auth | ⛔ blocked headless (keyring + 60s interactive window) |
+| MCP servers | follow the SDK/CLI auth | tools via `mcp_config.json` once auth is solved |
+
+The bridge currently runs the fully-verified `direct` backend; migrating
+to the SDK (API-key path) is the recommended next step for official
+stability, keeping the AI Pro bridge as fallback.
+
 ## Honest caveats ⚠️
 
 1. **The subscription does not include the Gemini API.** This project uses the
