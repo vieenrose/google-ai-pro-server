@@ -180,9 +180,23 @@ the *tool calling* works, the search backend is a separate credential.
 | **`gemini-3.1-flash-image`** | ✅ | real JPEG (1408×768), auto-uploaded to the forum — but **persistent HTTP 429 capacity limits** and **inconsistent color fidelity** (purple request rendered brownish-olive RGB 117/114/87; explicit color instructions barely help; scene prompts improve brightness) |
 
 Conclusion: **no base Gemini model generates images on the AI Pro direct API** — only
-`gemini-3.1-flash-image` (a preview model with heavy rate limits) does. The bridge
-routes image-generation requests to it automatically. For official-app-grade image
-quality you would need a separate Gemini API key (Imagen / gemini-2.5-flash-image).
+`gemini-3.1-flash-image` does. The bridge routes image-generation requests to it
+automatically. For official-app-grade image quality you would need a separate
+Gemini API key (Imagen / gemini-2.5-flash-image).
+
+**"Nano Banana 2" (frontier image model) availability — verified 2026-08-12:**
+
+| Candidate name | Direct API |
+|---|---|
+| `gemini-3.1-flash-image` | ✅ **the only image model served** — this is the current frontier image-gen model of the Antigravity lineup |
+| `gemini-3.1-flash-image-preview` | ❌ 404 |
+| `gemini-2.5-flash-image` / `-preview` (original "Nano Banana") | ❌ 404 |
+| `nano-banana-2` / `nanobanana-2` / `gemini-3-flash-image-preview` | ❌ 404 |
+
+So users **can** call the frontier image model explicitly (`@ai_gemini_image`, or any
+base-model agent routes automatically), but there is **no better image model
+served on the AI Pro direct API** — the quality/429 limits are intrinsic to how
+the subscription API exposes it.
 
 **How to pick a model for discourse-ai agents**
 
