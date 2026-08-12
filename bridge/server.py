@@ -31,6 +31,37 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "demo"))
 from gemini_backends import build_prompt, pick_backend  # noqa: E402
 from deep_research import run_research  # noqa: E402
 
+import re as _re
+
+IMAGE_GEN_MODEL = "gemini-3.1-flash-image"
+IMAGE_GEN_PATTERNS = [
+    r"畫一張", r"畫個", r"生成圖片", r"生成一張", r"生成图像", r"繪製", r"繪畫", r"插圖",
+    r"設計一張", r"製作圖片", r"圖片生成", r"畫一[張幅]", r"幫我畫", r"畫出",
+    r"\bdraw\b", r"\bdraw me\b", r"generate an? image", r"create an? image",
+    r"generate a picture", r"create a picture", r"image of a", r"picture of a",
+    r"illustration", r"\blogo\b", r"icon of", r"meme",
+]
+
+def looks_like_image_request(messages) -> bool:
+    """True when the last user turn asks to *generate* an image (not analyse one)."""
+    text_parts = []
+    has_image_input = False
+    for m in messages or []:
+        c = m.get("content")
+        if isinstance(c, str):
+            text_parts.append(c)
+        elif isinstance(c, list):
+            for el in c:
+                if isinstance(el, dict) and el.get("type") in ("image_url", "file"):
+                    has_image_input = True
+                if isinstance(el, dict) and el.get("type") == "text":
+                    text_parts.append(str(el.get("text", "")))
+    if has_image_input:
+        return False  # analysing an uploaded image, not generating
+    text = " ".join(text_parts)
+    return any(_re.search(p, text, _re.I) for p in IMAGE_GEN_PATTERNS)
+
+
 FORUM_BASE = os.environ.get("FORUM_BASE_URL", "").rstrip("/")
 FORUM_API_KEY = os.environ.get("FORUM_API_KEY", "")
 FORUM_USER = os.environ.get("FORUM_BOT_USERNAME", "gemini")
@@ -155,6 +186,26 @@ class BridgeHandler(BaseHTTPRequestHandler):
         model = body.get("model") or "gemini-3.5-flash"
         tools = body.get("tools")
         tool_choice = body.get("tool_choice")
+
+        # image-generation intent on a base chat model -> route to the image model
+        if tools is None and looks_like_image_request(messages) and model != IMAGE_GEN_MODEL:
+            sys.stderr.write(f"[bridge] routing image request: {model} -> {IMAGE_GEN_MODEL}\n")
+            model = IMAGE_GEN_MODEL
+            # append quality guidance to the last user text (preview model needs it)
+            for m in reversed(messages):
+                c = m.get("content")
+                if isinstance(c, str) and c.strip():
+                    m["content"] = (c.rstrip() +
+                        "\n\n（請輸出高品質、明亮、色彩鮮豔、構圖清晰的圖片，並嚴格遵循使用者指定的顏色與細節。）")
+                    break
+                if isinstance(c, list):
+                    for el in reversed(c):
+                        if isinstance(el, dict) and el.get("type") == "text":
+                            el["text"] = (str(el.get("text", "")).rstrip() +
+                                "\n\n（請輸出高品質、明亮、色彩鮮豔、構圖清晰的圖片，並嚴格遵循使用者指定的顏色與細節。）")
+                            break
+                    if isinstance(c[-1], dict) and c[-1].get("type") == "text":
+                        break
         if not messages:
             self._error(400, "messages required", "invalid_request_error")
             return

@@ -455,25 +455,41 @@ class DirectTokenBackend:
             "requestId": f"agent-{uuid.uuid4().hex}",
         }
 
-    def _generate_envelope(self, envelope: dict) -> dict:
+    def _generate_envelope(self, envelope: dict, retries: int = 3) -> dict:
         body = json.dumps(envelope).encode()
-        status, raw = _http_post(f"{CLOUDCODE_BASE}/v1internal:generateContent", body, self._access_token())
-        if status != 200:
-            raise RuntimeError(f"cloudcode generateContent HTTP {status}: {raw[:400]}")
-        payload = json.loads(raw)
-        return payload.get("response", payload)
-
-    def _generate_stream_envelope(self, envelope: dict):
-        body = json.dumps(envelope).encode()
-        for status, data in _http_post_stream(f"{CLOUDCODE_BASE}/v1internal:streamGenerateContent?alt=sse",
-                                              body, self._access_token()):
+        for attempt in range(retries):
+            status, raw = _http_post(f"{CLOUDCODE_BASE}/v1internal:generateContent", body, self._access_token())
+            if status == 429 and attempt < retries - 1:
+                time.sleep(20 * (attempt + 1))
+                continue
             if status != 200:
-                yield {"error": {"message": f"HTTP {status}: {data[:300]}"}}
-                return
-            payload = json.loads(data)
-            inner = payload.get("response", payload)
-            if inner:
-                yield inner
+                raise RuntimeError(f"cloudcode generateContent HTTP {status}: {raw[:400]}")
+            payload = json.loads(raw)
+            return payload.get("response", payload)
+        raise RuntimeError("cloudcode generateContent retries exhausted")
+
+    def _generate_stream_envelope(self, envelope: dict, retries: int = 3):
+        body = json.dumps(envelope).encode()
+        for attempt in range(retries):
+            first = None
+            first_data = None
+            for status, data in _http_post_stream(f"{CLOUDCODE_BASE}/v1internal:streamGenerateContent?alt=sse",
+                                                  body, self._access_token()):
+                if status != 200:
+                    if status == 429 and attempt < retries - 1:
+                        first = "429"
+                        first_data = data
+                        break
+                    yield {"error": {"message": f"HTTP {status}: {data[:300]}"}}
+                    return
+                payload = json.loads(data)
+                inner = payload.get("response", payload)
+                if inner:
+                    yield inner
+            if first == "429":
+                time.sleep(20 * (attempt + 1))
+                continue
+            return
 
     def _generate(self, prompt: str, model: str) -> dict:
         return self._generate_envelope(self._envelope(prompt, model))
