@@ -226,6 +226,13 @@ def _content_to_parts(content):
                     head, _, b64 = url.partition(",")
                     mime = head[5:].split(";")[0]
                     parts.append({"inlineData": {"mimeType": mime, "data": b64}})
+            elif el.get("type") == "file":
+                fd = (el.get("file") or {})
+                file_data = fd.get("file_data") or ""
+                if file_data.startswith("data:"):
+                    head, _, b64 = file_data.partition(",")
+                    mime = head[5:].split(";")[0]
+                    parts.append({"inlineData": {"mimeType": mime, "data": b64}})
         return parts
     return [{"text": str(content)}] if content is not None else []
 
@@ -343,6 +350,9 @@ class DirectTokenBackend:
             for part in parts:
                 if part.get("text"):
                     yield part["text"], {"type": "text"}
+                if part.get("inlineData"):
+                    d = part["inlineData"]
+                    yield "", {"type": "image", "mimeType": d.get("mimeType", "image/png"), "data": d.get("data", "")}
                 fc = part.get("functionCall")
                 if fc:
                     yield "", {"type": "tool_call", "tool_call": {

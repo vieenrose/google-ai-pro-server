@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import urllib.request
 import sys
 import time
 import uuid
@@ -29,6 +30,45 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "demo"))
 
 from gemini_backends import build_prompt, pick_backend  # noqa: E402
 from deep_research import run_research  # noqa: E402
+
+FORUM_BASE = os.environ.get("FORUM_BASE_URL", "").rstrip("/")
+FORUM_API_KEY = os.environ.get("FORUM_API_KEY", "")
+FORUM_USER = os.environ.get("FORUM_BOT_USERNAME", "gemini")
+
+
+def upload_to_forum(mime_type: str, b64data: str) -> str:
+    """Upload a generated image to the Discourse forum; returns markdown or ""."""
+    if not FORUM_BASE or not FORUM_API_KEY:
+        return ""
+    import base64 as _b64
+    import tempfile, uuid, mimetypes
+    ext = mimetypes.guess_extension(mime_type) or ".png"
+    payload = _b64.b64decode(b64data)
+    boundary = f"----gemini-bridge-{uuid.uuid4().hex}"
+    fname = f"gemini_{uuid.uuid4().hex[:10]}{ext}"
+    body = b""
+    for name, value in (("type", "composer"), ("user_id", ""), ("synchronous", "true")):
+        body += (f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").encode()
+    body += (
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"files[]\"; filename=\"{fname}\"\r\n"
+        f"Content-Type: {mime_type}\r\n\r\n"
+    ).encode()
+    body += payload + b"\r\n" + f"--{boundary}--\r\n".encode()
+    req = urllib.request.Request(f"{FORUM_BASE}/uploads.json", data=body, method="POST")
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    req.add_header("Api-Key", FORUM_API_KEY)
+    req.add_header("Api-Username", FORUM_USER)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            data = json.loads(r.read().decode())
+        url = data.get("url") or ""
+        if url:
+            if url.startswith("//"):
+                url = "https:" + url if FORUM_BASE.startswith("https") else "http:" + url
+            return f"![generated image]({url})"
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write(f"[bridge] upload failed: {e}\n")
+    return ""
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
@@ -200,6 +240,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(d)}\n\n".encode())
             self.wfile.flush()
 
+        _images = []
         try:
             chunk(role_done=True)
             for delta, meta in self.backend.chat_messages_stream(messages, model=model, tools=tools, tool_choice=tool_choice):
@@ -207,6 +248,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     chunk(delta_text=delta)
                 if meta and meta.get("type") == "tool_call":
                     tool_chunk(meta["tool_call"])
+                if meta and meta.get("type") == "image":
+                    _images.append(meta)
+            for img in _images:
+                md = upload_to_forum(img.get("mimeType", "image/png"), img.get("data", ""))
+                if md:
+                    chunk(delta_text="\n\n" + md)
             chunk(finish="stop")
         except Exception as e:  # noqa: BLE001
             try:
