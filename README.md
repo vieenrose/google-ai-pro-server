@@ -7,7 +7,7 @@ A complete stack: a **Python CLI demo**, a zero-dependency **HTTP bridge**, and
 a **Discourse plugin** that lets forum users summon Gemini (`@gemini …`) or
 trigger Deep Research (`/deep …`).
 
-## Status: ✅ live-verified (2026-08-11)
+## Status: ✅ live-verified (2026-08-11, updated 2026-08-12)
 
 Tested end-to-end against a real Google AI Pro account — chat and Deep Research
 both work with **authentic Google Search grounding** (the same
@@ -110,6 +110,7 @@ Model names are the **alias keys** you put in the discourse-ai LLM record
 | `gemini-2.5-pro` | ✅* | ✅ | \* frequent `503 MODEL_CAPACITY_EXHAUSTED` |
 | `claude-sonnet-4-6` | ✅ | ✅ | |
 | `claude-opus-4-6-thinking` | ✅ | ✅ | |
+| `gemini-3.1-flash-image` | ✅ | – | **image generation** (returns inlineData) |
 | `gpt-oss-120b` | ❌ 404 | – | not served on direct |
 | `gemini-3.5-flash-lite` | ❌ 404 | – | exists in agy picker, not on direct API |
 | `gemini-3.1-flash-lite-preview` | ❌ 404 | – | |
@@ -147,16 +148,21 @@ Capabilities depend heavily on *which model* and *which backend* you use.
 Verified 2026-08-11 against the live AI Pro direct API and the OpenAI-compatible
 bridge endpoint.
 
-| Capability | gemini-3.5-flash<br/>(direct) | gemini-2.5-flash<br/>(direct) | gemini-2.5-pro<br/>(direct) | agy<br/>backend |
+| Capability | gemini-3.5-flash<br/>(direct) | gemini-2.5-flash<br/>(direct) | gemini-3.1-flash-image<br/>(direct) | agy<br/>backend |
 |---|---|---|---|---|
-| Streaming chat (OpenAI-compat) | ✅ | ✅ | ✅ | ✅ |
-| Multi-turn conversation memory | ✅ | ✅ | ✅ | ✅ |
-| **Tool calling** (functionDeclarations) | ✅ | ✅ | ✅ (frequent 503) | ✅ |
-| **Forum research** (search tool + citations) | ✅ (fully working) | ✅ | ✅ | ✅ |
-| **Web search tool** (discourse-ai / Google CSE) | ✅ \* | ✅ \* | ✅ \* | ✅ \* |
-| Live Google Search **grounding** (in-model) | ❌ | ❌ | ❌ | ✅ |
-| Topic summaries / AI Helper | ✅ | ✅ | ✅ | ✅ |
-| Deep Research (3-phase workflow) | ✅ knowledge | ✅ | ✅ | ✅ live search |
+| Streaming chat (OpenAI-compat) | ✅ | ✅ | – | ✅ |
+| Multi-turn conversation memory | ✅ | ✅ | – | ✅ |
+| **Tool calling** (functionDeclarations) | ✅ | ✅ | – | ✅ |
+| **Forum research** (search tool + citations) | ✅ (fully working) | ✅ | – | ✅ |
+| **Web search tool** (discourse-ai / Google CSE) | ✅ \* | ✅ \* | – | ✅ \* |
+| **Image input** (upload → Gemini sees it) | ✅ | ✅ | – | ✅ |
+| **File input** (PDF etc. → Gemini reads it) | ✅ | ✅ | – | ✅ |
+| **Audio input** | ❌ (API 400) | ❌ | – | ✅ |
+| **Image generation** (output) | ❌ | ❌ | ✅ (auto-uploaded to forum) | ✅ |
+| Live Google Search **grounding** (in-model) | ❌ | ❌ | – | ✅ |
+| Topic summaries / AI Helper | ✅ | ✅ | – | ✅ |
+| Deep Research (3-phase workflow) | ✅ knowledge | ✅ | – | ✅ live search |
+| Chat (Discourse Chat DM / channel @mention) | ✅ | ✅ | ✅ | ✅ |
 
 \* needs a web-search provider key (Google CSE) configured in discourse-ai;
 the *tool calling* works, the search backend is a separate credential.
@@ -177,6 +183,12 @@ the *tool calling* works, the search backend is a separate credential.
 - The `agy` backend is the *only* path to authentic Google Search grounding
   (official Gemini-app-style answers), but it requires interactive/keyring
   auth — not headless-friendly on a server.
+- Image generation: register `gemini-3.1-flash-image` and create a Poe-style
+  agent (e.g. `@ai_gemini_image`). The bridge uploads generated images to the
+  forum automatically and appends `![generated image](…)` to the reply.
+- **Poe-style model picker**: create one agent per model with bot usernames
+  `ai_<model-slug>` — typing `@ai_` in a topic or chat shows the model list.
+  Every reply is tagged with the driving model (`— ⚙️ 由 <model> 驅動`).
 
 ## Honest caveats ⚠️
 
