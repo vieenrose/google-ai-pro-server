@@ -167,6 +167,23 @@ bridge endpoint.
 \* needs a web-search provider key (Google CSE) configured in discourse-ai;
 the *tool calling* works, the search backend is a separate credential.
 
+**Image generation quality (evaluated live, 2026-08-12 — prompt: "畫一張紫色的花")**
+
+| Model | Real image? | Result |
+|---|---|---|
+| `gemini-3.6-flash` | ❌ | text-only (describes an image) |
+| `gemini-3.5-flash` | ❌ | text-only (describes) |
+| `gemini-3-flash` | ❌ | text-only (emits SVG code) |
+| `gemini-3.1-pro` | ❌ | text-only (states it cannot) |
+| `gemini-2.5-flash` | ❌ | text-only (returns a DALL-E action JSON) |
+| `gemini-2.5-pro` | ❌ | HTTP 503 (capacity) |
+| **`gemini-3.1-flash-image`** | ✅ | real JPEG (1408×768), auto-uploaded to the forum — but **persistent HTTP 429 capacity limits** and **inconsistent color fidelity** (purple request rendered brownish-olive RGB 117/114/87; explicit color instructions barely help; scene prompts improve brightness) |
+
+Conclusion: **no base Gemini model generates images on the AI Pro direct API** — only
+`gemini-3.1-flash-image` (a preview model with heavy rate limits) does. The bridge
+routes image-generation requests to it automatically. For official-app-grade image
+quality you would need a separate Gemini API key (Imagen / gemini-2.5-flash-image).
+
 **How to pick a model for discourse-ai agents**
 
 - Chat / Helper / Summarizers → `gemini-3.5-flash` (fast, no tools needed).
