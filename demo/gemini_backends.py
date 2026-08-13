@@ -1153,7 +1153,7 @@ class AntigravityAppBackend(GeminiApiBackend):
             raw = gzip.decompress(raw)
         return json.loads(raw.decode(errors="replace"))
 
-    def _post(self, method: str, payload: dict, timeout: int = 180) -> dict:
+    def _post(self, method: str, payload: dict, timeout: int = 180, _attempt: int = 0) -> dict:
         req = urllib.request.Request(
             f"{self.ENDPOINT}/v1internal:{method}",
             data=json.dumps(payload, ensure_ascii=False).encode(),
@@ -1167,16 +1167,23 @@ class AntigravityAppBackend(GeminiApiBackend):
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 return self._decode_response(response.read(), response.headers)
         except urllib.error.HTTPError as e:
+            if e.code == 429 and _attempt < 3:
+                time.sleep(3 * (_attempt + 1))
+                return self._post(method, payload, timeout, _attempt + 1)
             try:
                 body = self._decode_response(e.read(), e.headers)
                 message = body.get("error", {}).get("message", str(body))
             except Exception:
                 message = e.read().decode(errors="replace")[:500]
+            if e.code == 429:
+                return {
+                    "__error__": "模型暫時繁忙（伺服器容量限制，非訂閱額度）。請稍後重試。"
+                }
             return {"__error__": f"Antigravity app HTTP {e.code}: {message[:500]}"}
         except Exception as e:  # noqa: BLE001
             return {"__error__": f"Antigravity app request failed: {e}"}
 
-    def _stream(self, method: str, payload: dict, timeout: int = 300):
+    def _stream(self, method: str, payload: dict, timeout: int = 300, _attempt: int = 0):
         req = urllib.request.Request(
             f"{self.ENDPOINT}/v1internal:{method}?alt=sse",
             data=json.dumps(payload, ensure_ascii=False).encode(),
@@ -1190,6 +1197,13 @@ class AntigravityAppBackend(GeminiApiBackend):
         try:
             response = urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as e:
+            if e.code == 429 and _attempt < 3:
+                time.sleep(3 * (_attempt + 1))
+                yield from self._stream(method, payload, timeout, _attempt + 1)
+                return
+            if e.code == 429:
+                yield {"__error__": "模型暫時繁忙（伺服器容量限制，非訂閱額度）。請稍後重試。"}
+                return
             try:
                 body = self._decode_response(e.read(), e.headers)
                 message = body.get("error", {}).get("message", str(body))
