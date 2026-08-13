@@ -1,38 +1,64 @@
 # Google AI Pro Server
 
 **Deep Research for Discourse, and the story of running this forum's AI on a
-Google AI Pro subscription.**
+Google AI Pro subscription — no Gemini API key, no API prepayment.**
 
-The stack: a zero-dependency **HTTP bridge** (multi-backend: official Gemini
-API / Antigravity CLI / cloudcode), a **Discourse plugin** for Deep Research
-(`@deep-research …` / `/deep …`), and the tooling to wire **Discourse AI's
-native Gemini support** to the same subscription.
+The stack: a zero-dependency **HTTP bridge** (multi-backend: Antigravity app /
+cloudcode / Gemini API / agy), and a **Discourse plugin** for Deep Research
+(`@deep-research …` / `/deep …`). Discourse AI's `@ai_*` agents point at the
+bridge, which routes everything through the **Antigravity application
+backend** so the forum consumes the Google AI Pro subscription quota.
 
-> **2026-08-13 — Native-first:** the forum's `@ai_*` chat agents now run on
-> Discourse AI's **built-in Gemini provider** (official Gemini API with an AI
-> Studio key from the same Google account). The bridge remains for Deep
-> Research and the cloudcode-only models (Claude / image gen). See
-> [Native Discourse AI migration](#native-discourse-ai-migration-2026-08-13)
-> for the why and the how.
+> **2026-08-13 (final) — Subscription-backed:** the forum's `@ai_*` agents,
+> Gemini Google Search grounding, and `@deep-research` all run on the
+> **Antigravity application backend** (`daily-cloudcode-pa.googleapis.com`),
+> authenticated by the Google AI Pro OAuth account. **No Gemini API key and no
+> API prepayment are used.** See
+> [Antigravity application backend](#antigravity-application-backend-2026-08-13).
 
 ## Status: ✅ live-verified (2026-08-11, updated 2026-08-13)
 
-Tested end-to-end against a real Google AI Pro account — chat and Deep Research
-both work with **authentic Google Search grounding** (the same
-`grounding-api-redirect` grounding the Gemini app uses):
+End-to-end on a real Google AI Pro account:
 
-```
-$ python3 cli.py --backend agy "Say hello"
-gemini> Hello! It is a pleasure to meet you…
+| Capability | Result |
+|---|---|
+| Gemini chat via `@ai_*` agents | ✅ subscription quota |
+| Google Search grounding (web-app style) | ✅ `googleSearch` + citations |
+| Gemini 3.1 **Pro** | ✅ (blocked on free tier, works on the app backend) |
+| `@deep-research` multi-phase report | ✅ 12.5k-char report, 39 web sources |
+| Image generation | ✅ `inlineData` (route preserved) |
 
-$ python3 cli.py --backend agy --deep "major world events August 2026"
-  ▸ Phase 1/3 — planning research on: …
-  ▸ Phase 2/3 — researching question 1/1: …
-  ▸ Phase 3/3 — synthesizing the final report…
-✔ Report complete — 4 question(s), 26 source(s), 51s
-# Global Political and Diplomatic Developments Report…
-# (Mecca defense pact, US–Brazil visa dispute, Vietnam–Australia visit…)
-```
+## Antigravity application backend (2026-08-13)
+
+### Why this is the answer
+
+Three backend routes were evaluated on the same Google account:
+
+| Route | Quota | Search | Status |
+|---|---|---|---|
+| Gemini API (AI Studio key) | free tier (flash only); paid tier needs **prepayment** | grounding = paid | ❌ not the subscription |
+| cloudcode-pa.googleapis.com | `paidTier: g1-pro-tier` visible but served as `free-tier` → 429 | – | ❌ Google-side sync bug |
+| **Antigravity app** (`daily-cloudcode-pa.googleapis.com`) | **Google One / AI Pro subscription** | **`googleSearch` native tool** | ✅ works |
+
+`paidTier` is not a client-selectable flag. The working path is Antigravity's
+**application request envelope**: the daily Cloud Code control plane plus an
+agent envelope carrying the model enum, session/trajectory IDs, and labels.
+Google's backend then selects the subscription tier itself.
+
+### Verified
+
+- `gemini-3.6-flash-low` → 200
+- `gemini-3.1-pro-low` → 200 (**Pro model on subscription quota**)
+- `googleSearch` grounding → 200 with `groundingMetadata` + `groundingChunks`
+- `gemini-3.1-flash-image` → 200 with `inlineData`
+- `@deep-research` forum run → 12,584-char cited report with 39 web sources
+
+### Caveat
+
+This endpoint is **private/undocumented** and may change with the Antigravity
+application. It is used to consume the subscription the user already pays for;
+the community documents the same envelope (see the `agycli2api` / `9router`
+projects). If Google changes it, fall back to the `gemini-api` backend.
 
 ## Native Discourse AI migration (2026-08-13)
 
@@ -68,7 +94,14 @@ Conclusion: use Discourse AI's built-in Gemini provider for the chat agents
 (flash), and keep the bridge for what the native path cannot do (the Deep
 Research pipeline and cloudcode-only Claude models).
 
-### How
+> **Superseded the same day.** The free-tier API key could not serve Pro,
+> image, or grounding. The final configuration routes everything through the
+> **Antigravity application backend** instead (see above) — the LLM records
+> are back on the bridge (`provider: open_ai`, url = bridge) with the
+> `antigravity-app` backend selected. The account below is retained as the
+> diagnostic history that led there.
+
+### How (historical — Gemini API key path)
 
 Discourse AI's Gemini endpoint is selected with `LlmModel.provider = "google"`
 (source: `completions/endpoints/gemini.rb`, `can_contact?`). Per LLM record:
@@ -104,54 +137,46 @@ generation come back automatically; no forum changes needed.
 ```
 Forum user
   │
-  ├─ @ai_* chat agents ──→ Discourse AI built-in Gemini endpoint
-  │                          (generativelanguage.googleapis.com, API key)
+  ├─ @ai_* chat agents ──→ Discourse AI (open_ai provider)
+  │                          → bridge /v1/chat/completions
+  │                             → antigravity-app backend
+  │                                → daily-cloudcode-pa.googleapis.com
+  │                                   → Google AI Pro subscription quota
   │
-  └─ @deep-research / /deep ──→ discourse-deep-research plugin (Ruby)
-                                 → bridge (Python, localhost:8787)
-                                    → /v1/deep-research (3-phase pipeline)
-                                       → gemini-api backend (flash models)
+  └─ @deep-research / /deep ──→ discourse-deep-research plugin
+                                 → bridge /v1/deep-research (3-phase)
+                                    → antigravity-app backend (googleSearch)
 ```
 
 | Layer | What it is |
 |---|---|
-| **Google AI Pro subscription** | Consumer subscription (5 TB plan). Powers the Gemini app. **It does NOT grant Gemini API paid-tier access** — the API is billed separately (prepayment for Tier 1); the free tier is used here at zero cost. |
-| **Native Discourse AI** | The forum's `@ai_*` agents run on Discourse AI's built-in Gemini provider (`LlmModel.provider = "google"`) with an AI Studio key from the same Google account. |
-| **discourse-deep-research plugin** | Handles `@deep-research …` / `/deep …`; calls the bridge's multi-phase research pipeline. |
-| **bridge (gemini-api backend)** | OpenAI-compatible HTTP bridge with multiple backends; `gemini-api` talks to the official Gemini API (flash models). Also has `direct` (cloudcode) and `agy` backends for the Antigravity subscription path. |
-| **Deep Research workflow** | 3-phase research: plan → gather → synthesize. Knowledge-based on the API key (googleSearch grounding requires Tier 1, verified 429 on the free tier). |
+| **Google AI Pro subscription** | The only credential. All model, search, and research calls draw from this quota. No Gemini API key, no API prepayment. |
+| **Discourse AI agents** | `@ai_*` mentions keep the native Discourse AI agent/mention machinery; the LLM records point at the bridge (`provider: open_ai`). |
+| **discourse-deep-research plugin** | Reserved alias `@deep-research …` / `/deep …` → bridge 3-phase research. |
+| **bridge `antigravity-app` backend** | Reproduces Antigravity's application request envelope; auto-attaches the `googleSearch` native tool and appends grounding citations. |
+| **Deep Research workflow** | plan → gather → synthesize, each phase grounded with Google Search (subscription quota). |
 
 ## Quick start
 
-**Native forum agents (recommended)** — configure the discourse-ai LLM records
-with `provider: google` + your AI Studio key (see
-[Native Discourse AI migration](#native-discourse-ai-migration-2026-08-13));
-no bridge needed for chat.
-
-**Deep Research** — run the bridge with the official API backend and install
-`discourse-deep-research`:
+**Forum (recommended)** — point the discourse-ai LLM records at the bridge and
+run it with the application backend:
 
 ```bash
-BRIDGE_TOKEN=change-me GEMINI_API_KEY=<your-key> \
-  python3 bridge/server.py --port 8787 --backend gemini-api
+BRIDGE_TOKEN=change-me \
+  ANTIGRAVITY_TOKEN_FILE=~/.gemini/antigravity-cli/antigravity-oauth-token \
+  ANTIGRAVITY_CLIENT_SECRET=<secret> \
+  python3 bridge/server.py --port 8787 --backend antigravity-app
+# → LlmModel records: provider=open_ai, url=http://<bridge>:8787/v1/chat/completions
 ```
 
-**Demo CLI** (chat / deep research on the host):
+**OAuth sign-in** (once): `python3 demo/auth_agy.py` prints a URL; paste the
+callback code back. The token is cached and auto-refreshed.
+
+**Demo CLI**:
 
 ```bash
 cd demo
-python3 cli.py --backend gemini-api "hello"      # GEMINI_API_KEY env required
-python3 cli.py --backend gemini-api --deep "quantum computing trends 2026"
-```
-
-**Antigravity subscription path** (cloudcode / agy, live-search-capable when
-the tier syncs):
-
-```bash
-curl -fsSL https://antigravity.google/cli/install.sh | bash
-agy   # browser OAuth sign-in (interactive)
-python3 demo/auth_agy.py   # or: manual OAuth flow — prints URL, saves token
-python3 demo/cli.py --backend direct "hello"
+python3 cli.py --backend antigravity-app "hello"
 ```
 
 ## Discourse plugin — Google Deep Research
@@ -163,7 +188,8 @@ the end-user commands. In short:
 
 ```bash
 # on the Discourse host:
-BRIDGE_TOKEN=change-me GEMINI_API_KEY=… python3 bridge/server.py --port 8787 --backend gemini-api
+BRIDGE_TOKEN=change-me ANTIGRAVITY_TOKEN_FILE=… ANTIGRAVITY_CLIENT_SECRET=… \
+  python3 bridge/server.py --port 8787 --backend antigravity-app
 
 cd /var/discourse/plugins
 cp -r /opt/google-ai-pro-server/discourse-deep-research discourse-deep-research
@@ -181,93 +207,64 @@ Then users just post:
 (The former `@gemini` chat feature was removed in v0.2.0 — chat is handled by
 the native `@ai_*` agents.)
 
-## Available models (native Gemini API, verified 2026-08-13)
+## Available models (Antigravity app backend, verified 2026-08-13)
 
-Model names are the **API model ids** in the discourse-ai LLM record
-(`name:` field). Verified with live calls on the free-tier key.
+Model names are the forum slug (`name:` on the LLM record); the bridge aliases
+them to the Antigravity application model ids. All calls draw from the Google
+AI Pro subscription quota.
 
-| Model id (LLM `name:`) | Native API status | Tool calling | Notes |
-|---|---|---|---|
-| `gemini-3.6-flash` | ✅ text, streaming, functionCall | ✅ | forum default agent |
-| `gemini-3.5-flash` | ✅ | ✅ | default chat / summarizer model |
-| `gemini-3.1-flash-lite` | ✅ | ✅ | replaces retired `gemini-2.5-flash` |
-| `gemini-3-flash-preview` | ✅ | ✅ | |
-| `gemini-3.1-pro-preview` | ❌ 429 free-tier limit 0 | – | needs prepaid Tier 1 key |
-| `gemini-2.5-pro` | ❌ retired upstream | – | alias → `gemini-3.1-pro-preview` |
-| `claude-sonnet-4-6` / `claude-opus-4-6` | ❌ not on Gemini API | – | cloudcode-only; bridge replies a clear error |
-| `nano-banana-pro-preview` (Nano Banana 2) | ❌ 429 free-tier limit 0 | – | image gen; needs Tier 1 |
-| `gemini-3.1-flash-image` | ❌ 429 free-tier limit 0 | – | image gen; needs Tier 1 |
-| googleSearch grounding (`tools: [{googleSearch: {}}]`) | ❌ 429 free-tier limit 0 | – | live web search; needs Tier 1 |
-| `gemini-3.5-flash` (+ `-low`) | ✅ | ✅ | default chat model |
-| `gemini-3-flash` | ✅ | ✅ | |
-| `gemini-3.1-pro` (+ `-low`, `-high`) | ✅ | ✅ | |
-| `gemini-2.5-flash` | ✅ | ✅ | **recommended tool-capable model** |
-| `gemini-2.5-pro` | ✅* | ✅ | \* frequent `503 MODEL_CAPACITY_EXHAUSTED` |
-| `claude-sonnet-4-6` | ✅ | ✅ | |
+| Forum slug | App model | Verified |
+|---|---|---|
+| `gemini-3.6-flash` | `gemini-3.6-flash-low` | ✅ text, streaming, functionCall, web search |
+| `gemini-3.5-flash` | `gemini-3.5-flash-low` | ✅ |
+| `gemini-2.5-flash` → `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite` | ✅ (alias; also the web-search-capable model id) |
+| `gemini-3.1-pro` | `gemini-3.1-pro-low` | ✅ **Pro on subscription quota** |
+| `gemini-2.5-pro` | `gemini-2.5-pro` | ✅ (catalog present) |
+| `claude-sonnet-4-6` / `claude-opus-4-6` | `claude-sonnet-4-6` / `claude-opus-4-6-thinking` | ✅ (Antigravity app catalog) |
+| `gemini-3.1-flash-image` | `gemini-3.1-flash-image` | ✅ `inlineData` image output |
+| `googleSearch` grounding | native tool | ✅ `groundingChunks` + citations |
+
 ## Choosing the right mode ⚖️
 
 Three ways to get AI answers in the forum — they use **different knowledge
 bases** and are complementary:
 
-| | **Forum Researcher**<br/>(Discourse AI) | **Deep Research**<br/>(`@deep-research`) | **Plain summon**<br/>(`@Forum_Helper_bot`, `@ai_<model>`) |
+| | **Forum Researcher**<br/>(Discourse AI) | **Deep Research**<br/>(`@deep-research`) | **Plain summon**<br/>(`@ai_<model>`) |
 |---|---|---|---|
-| **Knows** | Your forum's posts only | The web / model knowledge | The current thread + model |
-| **Searches** | Posts via `PostsFilter` (keywords, topics, users, categories) | knowledge-based 3-phase pipeline (live search grounding needs Tier 1) | nothing (uses thread history as context) |
-| **Workflow** | understand → plan filter → dry-run count → refine → batch-analyze → summarize | plan → gather per question → synthesize report | single LLM call with thread memory |
-| **Output** | insights + **citations to forum posts** `[ref](/t/-/topic/post)` | structured report + **URL sources** | conversational answer |
-| **Cost** | per-post analysis (batched, dry-run first) | report workflow | one call |
-| **Best for** | "what have we discussed about X?" with receipts | "what does the world say about X?" with sources | "answer my question in the context of this thread" |
+| **Knows** | Your forum's posts only | The web (grounded search) | The current thread + model |
+| **Searches** | Posts via `PostsFilter` | Google Search per phase (subscription quota) | Google Search when the model decides (grounding) |
+| **Workflow** | understand → plan → dry-run → refine → analyze → summarize | plan → gather → synthesize, each grounded | single LLM call with thread memory |
+| **Output** | insights + **citations to forum posts** | structured report + **URL sources** | conversational answer + grounding citations |
+| **Best for** | "what have we discussed about X?" | "what does the world say about X?" | "answer my question with web context" |
 
-The Poe-style model picker (`@ai_<model>`) gives you the *plain summon* mode
-with a choice of backend models — every reply is tagged with the driving model
+The Poe-style model picker (`@ai_<model>`) gives the *plain summon* mode with a
+choice of models — every reply is tagged with the driving model
 (`— ⚙️ 由 <model> 驅動`).
 
 ## Feature matrix by model ⚡
 
-Verified live 2026-08-13 against the **official Gemini API** (native Discourse
-AI provider + bridge `gemini-api` backend, free-tier key). Rows marked ✅ were
-tested end-to-end with real calls.
+Verified live 2026-08-13 on the **Antigravity application backend**
+(subscription quota, `googleSearch` auto-attached). ✅ = tested end-to-end.
 
-| Capability | gemini-3.6-flash | gemini-3.5-flash | gemini-3.1-flash-lite | pro / image models | Notes |
-|---|---|---|---|---|---|
-| Text chat | ✅ | ✅ | ✅ | ❌ quota | pro/image = free-tier limit 0 |
-| Streaming (SSE, OpenAI-compat) | ✅ | ✅ | ✅ | ❌ | bridge + native both verified |
-| Multi-turn memory | ✅ | ✅ | ✅ | ❌ | discourse thread context |
-| **Tool calling** (functionDeclarations) | ✅ | ✅ | ✅ | ❌ | flash auto-emits functionCalls |
-| **Forum research** (search tool + citations) | ✅ | ✅ | ✅ | ❌ | via Discourse AI tools |
-| **Image input** (upload → model sees it) | ✅ | ✅ | ✅ | ❌ | inlineData verified |
-| **Image generation via function-call** | ✅* | ✅* | ✅* | ❌ | flash emits `generate_image` calls with optimized prompts; image models blocked by quota |
-| **Image generation** (direct output) | ❌ | ❌ | ❌ | ❌ | flash returns SVG/text only; image models = 429 on free tier |
-| **Live web search grounding** (`googleSearch`) | ❌ | ❌ | ❌ | ❌ | 429 on free-tier key (needs Tier 1 prepay) |
-| **Deep Research pipeline** (3-phase, plugin) | ✅ | ✅ | ✅ | ❌ | knowledge-based (no live search on free tier) |
-| Thinking (details blocks in forum) | ✅ | ✅ | ✅ | ❌ | verified live: `<details class='ai-thinking'>` |
-| Topic summaries / AI Helper | ✅ | ✅ | ✅ | ❌ | |
-
-Key findings (2026-08-13, free-tier key `AQ.Ab8RN6I2Xv…`):
-
-- **Flash models are the free tier** — `gemini-3.6-flash`, `gemini-3.5-flash`,
-  `gemini-3.1-flash-lite`, `gemini-3-flash-preview` all work with zero cost.
-- **Everything else needs the prepaid Tier 1**: pro models, both image models
-  (`nano-banana-pro-preview` / Nano Banana 2, `gemini-3.1-flash-image`) and
-  `googleSearch` grounding all return
-  `429 … generate_content_free_tier_requests, limit: 0` on the free-tier key.
-- **Multimodal-out mechanism verified**: give 3.6-flash a `generate_image`
-  function declaration and it auto-emits a `functionCall` with an *improved*
-  image prompt — the bridge can then call the image model and return the image
-  as a `functionResponse`. Only the image models' quota blocks the last step.
-- **`gemini-2.5-flash`/`gemini-2.5-pro` are retired upstream** ("no longer
-  available to new users"); the forum aliases them to
-  `gemini-3.1-flash-lite` / `gemini-3.1-pro-preview`.
-- **Claude models** exist only on the cloudcode (Antigravity) side; the bridge
-  replies with a clear note instead of failing silently.
+| Capability | flash (3.6/3.5) | pro (3.1) | image | Notes |
+|---|---|---|---|---|
+| Text chat | ✅ | ✅ | – | subscription quota |
+| Streaming (SSE, OpenAI-compat) | ✅ | ✅ | ✅ | bridge stream verified |
+| Multi-turn memory | ✅ | ✅ | – | discourse thread context |
+| **Tool calling** (functionDeclarations) | ✅ | ✅ | – | VALIDATED mode |
+| **Live web search grounding** (`googleSearch`) | ✅ | ✅ | – | `groundingChunks` → forum citations |
+| **Deep Research pipeline** (3-phase) | ✅ | – | – | 12.5k-char report, 39 sources |
+| **Image generation** (`inlineData`) | – | – | ✅ | route preserved |
+| Thinking (details blocks) | ✅ | ✅ | – | bounded thinkingBudget |
+| Topic summaries / AI Helper | ✅ | – | – | via default LLM |
 
 **How to pick a model for discourse-ai agents (current state)**
 
-- Default chat agent → `gemini-3.6-flash` (frontier flash, tools, thinking).
+- Default chat agent → `gemini-3.6-flash` (subscription quota, web search, thinking).
 - Summarizer / helper → `gemini-3.5-flash`.
 - Legacy 2.5-flash agents → aliased to `gemini-3.1-flash-lite`.
-- Pro / image / Claude → configure the records now; they answer with a clear
-  error until the account gets Tier 1 (prepay) or the cloudcode tier syncs.
+- Pro / image / Claude → available on the Antigravity app backend; enable their
+  `@ai_*` agents (currently hidden from the mention list) to surface them.
 
 ## Antigravity SDK / MCP migration status 🔬
 
@@ -287,19 +284,21 @@ connections — the intended replacement for the reverse-engineered
 | SDK + AI Pro OAuth | agy CLI keyring auth | ⛔ blocked headless (keyring + 60s interactive window) |
 | MCP servers | follow the SDK/CLI auth | tools via `mcp_config.json` once auth is solved |
 
-The bridge currently runs the fully-verified `direct` backend; migrating
-to the SDK (API-key path) is the recommended next step for official
-stability, keeping the AI Pro bridge as fallback.
+The bridge currently runs the fully-verified `antigravity-app` backend
+(subscription quota, web search, image, Pro). The SDK path is no longer the
+recommended migration — the application backend already delivers the
+subscription experience.
 
 ## Honest caveats ⚠️
 
 1. **The subscription does not include the Gemini API.** This project uses the
-   Antigravity backend instead — an unofficial integration that can break or be
-   restricted at any time. The `agy` CLI itself is official, but automating it
-   headlessly is outside its documented support envelope.
-2. **Live search depends on the `agy` backend.** The full `agy` agent has
-   authentic Google Search grounding (verified). The `direct` backend can only
-   answer from training data.
+   Antigravity **application** backend instead — a private, undocumented
+   endpoint that can change or be restricted at any time. The `agy` CLI itself
+   is official, but automating the application request envelope headlessly is
+   outside its documented support envelope.
+2. **Google Search is the Antigravity app's native `googleSearch` tool.** It is
+   subscription-backed and returns `groundingChunks`, which the bridge turns
+   into forum citations — verified with a 39-source deep-research report.
 3. **Deep Research is a workflow, not the paid agent.** The true Deep Research
    agent exists only in the Gemini app or as a *paid* API. Here it's a 3-phase
    research workflow (plan → gather → synthesize) — with real search grounding

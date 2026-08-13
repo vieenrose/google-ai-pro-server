@@ -4,7 +4,7 @@
 # report) is produced by the local bridge (bridge/server.py), which consumes
 # your Google AI Pro subscription. No Gemini API key required by the plugin
 # itself; the bridge holds the model configuration.
-#
+# ---
 # NOTE: internal identifiers (setting keys gemini_*, module DiscourseGemini,
 # job names, the discourse-gemini-bot-post CSS class) were intentionally kept
 # from the former "discourse-gemini" plugin so existing forum data and stored
@@ -52,6 +52,13 @@ after_initialize do
 
   # ── permission + rate-limit helpers ───────────────────────────────────────
   module ::DiscourseGemini
+    def self.deep_research_bot?(user)
+      return false if user.blank?
+      user.id == Discourse::SYSTEM_USER_ID ||
+        user.username == "deep-research" ||
+        user.custom_fields[BOT_FIELD] == true
+    end
+
     def self.allowed_for?(user)
       return false if user.blank?
       return false if deep_research_bot?(user)

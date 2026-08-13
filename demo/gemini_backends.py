@@ -27,6 +27,8 @@ Every backend exposes the same tiny interface:
 
 from __future__ import annotations
 
+import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -1088,9 +1090,317 @@ class GeminiApiBackend:
                 yield "", {"usage": event["usageMetadata"]}
 
 
+class AntigravityAppBackend(GeminiApiBackend):
+    """Antigravity application's subscription-backed inference path.
+
+    This is distinct from ``cloudcode-pa.googleapis.com`` (the Code Assist
+    endpoint used by the older direct backend). Antigravity uses the daily
+    Cloud Code control plane plus an agent envelope containing the model enum,
+    session/trajectory identifiers, and labels. The model catalog and quota
+    are fetched from the same control plane, so paid Google One / G1 models
+    are selected by Google's backend rather than by a client-side tier flag.
+
+    This endpoint is private/undocumented and may change with the application.
+    """
+
+    name = "antigravity-app"
+    ENDPOINT = "https://daily-cloudcode-pa.googleapis.com"
+    APP_USER_AGENT = "antigravity/cli/1.0.1 linux/arm64"
+    APP_SYSTEM_INSTRUCTION = "You are Antigravity, a helpful agentic AI assistant."
+
+    MODEL_ALIASES = {
+        "gemini-3.6-flash": "gemini-3.6-flash-low",
+        "gemini-3.5-flash": "gemini-3.5-flash-low",
+        "gemini-3.1-flash-lite": "gemini-3.1-flash-lite",
+        "gemini-3-flash": "gemini-3-flash",
+        "gemini-3.1-pro": "gemini-3.1-pro-low",
+        "gemini-2.5-pro": "gemini-2.5-pro",
+        "claude-sonnet-4-6": "claude-sonnet-4-6",
+        "claude-opus-4-6": "claude-opus-4-6-thinking",
+        "gemini-3.1-flash-image": "gemini-3.1-flash-image",
+    }
+
+    def __init__(self, token_file: str | None = None):
+        self.token_file = Path(
+            token_file or os.environ.get("ANTIGRAVITY_TOKEN_FILE") or AGY_OAUTH_TOKEN
+        )
+        self._token: dict = {}
+        self._project_id = ""
+        self._models: dict = {}
+
+    def available(self) -> bool:
+        return self.token_file.exists()
+
+    def describe(self) -> str:
+        state = "OAuth token present" if self.available() else "no OAuth token found"
+        return (
+            f"AntigravityAppBackend ({state}) — daily Cloud Code application "
+            "backend; uses Google One/AI Pro subscription quota"
+        )
+
+    def _access_token(self) -> str:
+        if not self._token or int(self._token.get("expiry", 0)) - time.time() < 120:
+            self._token = _read_agy_token(self.token_file)
+            if int(self._token.get("expiry", 0)) - time.time() < 120:
+                self._token = _refresh_token(self._token)
+        return self._token["access_token"]
+
+    @staticmethod
+    def _decode_response(raw: bytes, headers) -> dict:
+        if headers.get("Content-Encoding", "").lower() == "gzip":
+            raw = gzip.decompress(raw)
+        return json.loads(raw.decode(errors="replace"))
+
+    def _post(self, method: str, payload: dict, timeout: int = 180) -> dict:
+        req = urllib.request.Request(
+            f"{self.ENDPOINT}/v1internal:{method}",
+            data=json.dumps(payload, ensure_ascii=False).encode(),
+            method="POST",
+        )
+        req.add_header("Authorization", f"Bearer {self._access_token()}")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("User-Agent", self.APP_USER_AGENT)
+        req.add_header("Accept-Encoding", "gzip")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return self._decode_response(response.read(), response.headers)
+        except urllib.error.HTTPError as e:
+            try:
+                body = self._decode_response(e.read(), e.headers)
+                message = body.get("error", {}).get("message", str(body))
+            except Exception:
+                message = e.read().decode(errors="replace")[:500]
+            return {"__error__": f"Antigravity app HTTP {e.code}: {message[:500]}"}
+        except Exception as e:  # noqa: BLE001
+            return {"__error__": f"Antigravity app request failed: {e}"}
+
+    def _stream(self, method: str, payload: dict, timeout: int = 300):
+        req = urllib.request.Request(
+            f"{self.ENDPOINT}/v1internal:{method}?alt=sse",
+            data=json.dumps(payload, ensure_ascii=False).encode(),
+            method="POST",
+        )
+        req.add_header("Authorization", f"Bearer {self._access_token()}")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Accept", "text/event-stream")
+        req.add_header("User-Agent", self.APP_USER_AGENT)
+        req.add_header("Accept-Encoding", "gzip")
+        try:
+            response = urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            try:
+                body = self._decode_response(e.read(), e.headers)
+                message = body.get("error", {}).get("message", str(body))
+            except Exception:
+                message = e.read().decode(errors="replace")[:500]
+            yield {"__error__": f"Antigravity app HTTP {e.code}: {message[:500]}"}
+            return
+        raw = response.read()
+        if response.headers.get("Content-Encoding", "").lower() == "gzip":
+            raw = gzip.decompress(raw)
+        for line in raw.decode(errors="replace").splitlines():
+            if line.startswith("data:"):
+                value = line[5:].strip()
+                if value and value != "[DONE]":
+                    try:
+                        yield json.loads(value)
+                    except json.JSONDecodeError:
+                        continue
+
+    def _project(self) -> str:
+        if not self._project_id:
+            response = self._post("loadCodeAssist", {"metadata": {"ideType": "ANTIGRAVITY"}})
+            if response.get("__error__"):
+                raise RuntimeError(response["__error__"])
+            self._project_id = response.get("cloudaicompanionProject", "")
+            if not self._project_id:
+                raise RuntimeError("Antigravity app returned no Cloud AI Companion project")
+        return self._project_id
+
+    def _model_config(self, model: str) -> tuple[str, dict]:
+        app_model = self.MODEL_ALIASES.get(model, model)
+        if not self._models:
+            response = self._post("fetchAvailableModels", {"project": self._project()})
+            if response.get("__error__"):
+                raise RuntimeError(response["__error__"])
+            self._models = response.get("models", {})
+        config = self._models.get(app_model, {})
+        if not config:
+            raise RuntimeError(f"Antigravity app model is unavailable: {app_model}")
+        return app_model, config
+
+    def _request_payload(self, messages, model, tools=None, tool_choice=None) -> tuple[dict, str]:
+        app_model, model_config = self._model_config(model)
+        body = self._envelope_messages(messages, model, tools, tool_choice)
+        # Antigravity's application path exposes Google Search as a native
+        # provider tool. This uses the subscription-backed app quota, not the
+        # Gemini Developer API/CSE quota.
+        native_tools = list(body.get("tools") or [])
+        if not any(isinstance(t, dict) and "googleSearch" in t for t in native_tools):
+            native_tools.append({"googleSearch": {}})
+        body["tools"] = native_tools
+        system = body.get("systemInstruction") or {"parts": []}
+        system_parts = system.get("parts") or []
+        if not system_parts or system_parts[0].get("text") != self.APP_SYSTEM_INSTRUCTION:
+            system = {"parts": [{"text": self.APP_SYSTEM_INSTRUCTION}, *system_parts]}
+
+        generation = dict(body.get("generationConfig") or {})
+        if "maxOutputTokens" not in generation and model_config.get("maxOutputTokens"):
+            generation["maxOutputTokens"] = model_config["maxOutputTokens"]
+        # Keep the visible thinking block bounded so a long internal thought
+        # cannot consume the whole answer budget. The app model catalog exposes
+        # a small default thinking budget for its thinking-capable models.
+        if model_config.get("supportsThinking") and "thinkingConfig" not in generation:
+            generation["thinkingConfig"] = {
+                "thinkingBudget": min(int(model_config.get("thinkingBudget") or 1024), 2048),
+                "includeThoughts": True,
+            }
+        if app_model == "gemini-3.1-flash-image":
+            generation.setdefault("responseModalities", ["TEXT", "IMAGE"])
+
+        tool_config = body.get("toolConfig") or {
+            "functionCallingConfig": {"mode": "VALIDATED"}
+        }
+        if tools:
+            fc = tool_config.setdefault("functionCallingConfig", {})
+            if tool_choice == "none":
+                fc["mode"] = "NONE"
+            elif tool_choice == "required":
+                fc["mode"] = "ANY"
+            else:
+                fc["mode"] = "VALIDATED"
+
+        digest = hashlib.sha256(
+            json.dumps(messages, ensure_ascii=False, sort_keys=True, default=str).encode()
+        ).hexdigest()
+        conversation_id = str(uuid.UUID(digest[:32]))
+        trajectory_id = str(uuid.uuid4())
+        step_index = max(3, len(messages))
+        session_id = str(-abs(int(digest[32:48], 16)))
+        request_id = f"agent/{conversation_id}/{int(time.time() * 1000)}/{trajectory_id}/{step_index}"
+        model_enum = model_config.get("model", "MODEL_PLACEHOLDER_M187")
+
+        request = {
+            "contents": body.get("contents", []),
+            "systemInstruction": system,
+            "tools": body.get("tools", []),
+            "toolConfig": tool_config,
+            "labels": {
+                "last_step_index": str(step_index - 1),
+                "model_enum": model_enum,
+                "trajectory_id": trajectory_id,
+                "used_claude": "false",
+                "used_claude_conservative": "false",
+            },
+            "generationConfig": generation,
+            "sessionId": session_id,
+        }
+        return {
+            "project": self._project_id,
+            "requestId": request_id,
+            "request": request,
+            "model": app_model,
+            "userAgent": "antigravity",
+            "requestType": "agent",
+        }, app_model
+
+    @staticmethod
+    def _response_body(response: dict) -> dict:
+        if response.get("__error__"):
+            return response
+        return response.get("response", response)
+
+    @staticmethod
+    def _grounding_markdown(response: dict) -> str:
+        candidates = response.get("candidates") or []
+        if not candidates:
+            return ""
+        metadata = candidates[0].get("groundingMetadata") or {}
+        links = []
+        for chunk in metadata.get("groundingChunks") or []:
+            web = chunk.get("web") or {}
+            uri, title = web.get("uri"), web.get("title") or web.get("domain")
+            if uri and uri not in [u for u, _ in links]:
+                links.append((uri, title or uri))
+        if not links:
+            return ""
+        return "\n\n### Sources\n" + "\n".join(
+            f"- [{title}]({uri})" for uri, title in links[:10]
+        )
+
+    def chat(self, prompt: str, model: str = "gemini-3.5-flash", stream: bool = False) -> ChatResult:
+        return self.chat_messages([{"role": "user", "content": prompt}], model=model)
+
+    def chat_messages(self, messages, model: str = "gemini-3.5-flash", stream: bool = False,
+                      tools=None, tool_choice=None) -> ChatResult:
+        try:
+            payload, app_model = self._request_payload(messages, model, tools, tool_choice)
+            response = self._response_body(self._post("generateContent", payload))
+        except Exception as e:  # noqa: BLE001
+            return ChatResult(text="", error=str(e))
+        if response.get("__error__"):
+            return ChatResult(text="", error=response["__error__"])
+        text, usage = _gemini_response_to_text(response)
+        text += self._grounding_markdown(response)
+        calls = self._extract_tool_calls(response)
+        finish = (response.get("candidates") or [{}])[0].get("finishReason", "")
+        return ChatResult(
+            text=text,
+            model=model,
+            usage=usage,
+            raw=response,
+            tool_calls=calls,
+            finish_reason="tool_calls" if calls else ("stop" if finish == "STOP" else ""),
+        )
+
+    def chat_messages_stream(self, messages, model: str = "gemini-3.5-flash", tools=None, tool_choice=None):
+        try:
+            payload, app_model = self._request_payload(messages, model, tools, tool_choice)
+        except Exception as e:  # noqa: BLE001
+            yield f"\n\n[bridge error: {e}]", None
+            return
+        grounding_response = None
+        for event in self._stream("streamGenerateContent", payload):
+            if event.get("__error__"):
+                yield f"\n\n[bridge error: {event['__error__']}]", None
+                continue
+            response = self._response_body(event)
+            grounding_response = response
+            for cand in response.get("candidates", []) or []:
+                for part in (cand.get("content") or {}).get("parts", []) or []:
+                    if part.get("text"):
+                        yield part["text"], None
+                    if part.get("inlineData"):
+                        data = part["inlineData"]
+                        yield "", {
+                            "type": "image",
+                            "mimeType": data.get("mimeType", "image/png"),
+                            "data": data.get("data", ""),
+                        }
+                    fc = part.get("functionCall")
+                    if fc:
+                        yield "", {
+                            "type": "tool_call",
+                            "tool_call": {
+                                "id": fc.get("id") or f"call_{abs(hash(fc.get('name', '')))}",
+                                "type": "function",
+                                "function": {
+                                    "name": fc.get("name", ""),
+                                    "arguments": json.dumps(fc.get("args", {}), ensure_ascii=False),
+                                },
+                            },
+                        }
+            if response.get("usageMetadata"):
+                yield "", {"usage": response["usageMetadata"]}
+        if grounding_response:
+            citations = self._grounding_markdown(grounding_response)
+            if citations:
+                yield citations, None
+
+
 def pick_backend(prefer: str | None = None) -> object:
-    """Auto-select the best available backend (agy > direct > gemini > mock)."""
-    order = [AgyBackend(), GeminiApiBackend(), DirectTokenBackend(), GeminiCliBackend()]
+    """Auto-select the best available backend (agy > app > direct > API > mock)."""
+    order = [AgyBackend(), AntigravityAppBackend(), DirectTokenBackend(), GeminiApiBackend(), GeminiCliBackend()]
     if prefer:
         for b in order:
             if b.name == prefer:
