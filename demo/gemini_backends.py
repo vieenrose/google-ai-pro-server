@@ -795,9 +795,302 @@ def _gemini_response_to_text(resp: dict) -> tuple[str, dict]:
     return "\n".join(parts), resp.get("usageMetadata") or {}
 
 
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+
+class GeminiApiBackend:
+    """Official Gemini API (generativelanguage.googleapis.com) via an AI Studio
+    key. The key belongs to the same Google account that holds the Google AI
+    Pro subscription, so usage is drawn from the subscription's API tier.
+    """
+
+    name = "gemini-api"
+
+    # forum slug -> official API model id (verified 2026-08-13)
+    MODEL_ALIASES = {
+        "gemini-3.6-flash": "gemini-3.6-flash",
+        "gemini-3.5-flash": "gemini-3.5-flash",
+        "gemini-3.1-flash-lite": "gemini-3.1-flash-lite",
+        "gemini-3-flash": "gemini-3-flash-preview",
+        "gemini-2.5-flash": "gemini-3.1-flash-lite",  # retired upstream
+        "gemini-3.1-pro": "gemini-3.1-pro-preview",
+        "gemini-2.5-pro": "gemini-3.1-pro-preview",  # retired upstream
+        "gemini-3.1-flash-image": "gemini-3.1-flash-image",
+        "nano-banana": "nano-banana-pro-preview",
+    }
+
+    # models that only exist on the cloudcode (Antigravity) side — the bridge
+    # replies with a clear note instead of failing silently.
+    CLOUDCODE_ONLY = {
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
+        "claude-opus-4-6-thinking",
+        "gpt-oss-120b",
+    }
+
+    def __init__(self, api_key: str | None = None):
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
+
+    def available(self) -> bool:
+        return bool(self.api_key)
+
+    def describe(self) -> str:
+        return (
+            "GeminiApiBackend — official Gemini API "
+            "(generativelanguage.googleapis.com) with AI Studio key"
+        )
+
+    # -- helpers -------------------------------------------------------------
+    def _api_model(self, model: str) -> str:
+        return self.MODEL_ALIASES.get(model, model)
+
+    @staticmethod
+    def _default_body() -> dict:
+        return {
+            "generationConfig": {},
+            "safetySettings": [
+                {"category": c, "threshold": "BLOCK_NONE"}
+                for c in (
+                    "HARM_CATEGORY_HARASSMENT",
+                    "HARM_CATEGORY_HATE_SPEECH",
+                    "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "HARM_CATEGORY_DANGEROUS_CONTENT",
+                )
+            ],
+        }
+
+    def _api_post(self, model: str, body: dict, timeout: int = 300) -> dict:
+        url = f"{GEMINI_API_BASE}/models/{model}:generateContent?key={self.api_key}"
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode())
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode()
+            try:
+                msg = json.loads(raw).get("error", {}).get("message", raw[:300])
+            except Exception:
+                msg = raw[:300]
+            return {"__error__": f"Gemini API HTTP {e.code}: {msg[:400]}"}
+        except Exception as e:  # noqa: BLE001
+            return {"__error__": f"Gemini API request failed: {e}"}
+
+    def _api_stream(self, model: str, body: dict, timeout: int = 300):
+        url = (
+            f"{GEMINI_API_BASE}/models/{model}:streamGenerateContent"
+            f"?key={self.api_key}&alt=sse"
+        )
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Accept", "text/event-stream")
+        try:
+            resp = urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode()
+            try:
+                msg = json.loads(raw).get("error", {}).get("message", raw[:300])
+            except Exception:
+                msg = raw[:300]
+            yield json.dumps({"__error__": f"Gemini API HTTP {e.code}: {msg[:400]}"})
+            return
+        buf = ""
+        while True:
+            chunk = resp.read(4096)
+            if not chunk:
+                break
+            buf += chunk.decode(errors="replace")
+            while "\n" in buf:
+                line, buf = buf.split("\n", 1)
+                line = line.strip()
+                if line.startswith("data:"):
+                    yield line[5:].strip()
+
+    @staticmethod
+    def _extract_tool_calls(resp: dict) -> list:
+        calls = []
+        for cand in resp.get("candidates", []) or []:
+            for part in (cand.get("content") or {}).get("parts", []) or []:
+                fc = part.get("functionCall")
+                if fc:
+                    calls.append({
+                        "id": f"call_{len(calls)}",
+                        "type": "function",
+                        "function": {
+                            "name": fc.get("name", ""),
+                            "arguments": json.dumps(fc.get("args", {}), ensure_ascii=False),
+                        },
+                    })
+        return calls
+
+    def _envelope_messages(self, messages, model: str, tools=None, tool_choice=None) -> dict:
+        api_model = self._api_model(model)
+        is_gemini3 = api_model.startswith("gemini-3")
+        system_parts, contents = [], []
+        for m in messages:
+            role = (m or {}).get("role", "user")
+            content = (m or {}).get("content")
+            if role == "system":
+                if content is not None:
+                    system_parts.append({"text": str(content)})
+            elif role == "tool":
+                name = (m or {}).get("name") or (m or {}).get("tool_call_id") or "tool"
+                payload = content if content is not None else ""
+                try:
+                    parsed = json.loads(payload) if isinstance(payload, str) else payload
+                    response_obj = parsed if isinstance(parsed, dict) else {"result": parsed}
+                except Exception:
+                    response_obj = {"result": payload}
+                contents.append({
+                    "role": "user",
+                    "parts": [{"functionResponse": {"name": name, "response": response_obj}}],
+                })
+            elif role == "assistant":
+                tc = (m or {}).get("tool_calls") or []
+                parts = []
+                if content:
+                    parts.append({"text": str(content)})
+                for call in tc:
+                    fn = call.get("function", {}) if isinstance(call, dict) else {}
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except Exception:
+                        args = {}
+                    fc_obj = {"name": fn.get("name", ""), "args": args}
+                    if is_gemini3:
+                        # required by the API validator for thinking models
+                        fc_obj["thoughtSignature"] = "skip_thought_signature_validator"
+                    parts.append({"functionCall": fc_obj})
+                contents.append({"role": "model", "parts": parts or [{"text": ""}]})
+            else:
+                if content is None:
+                    continue
+                parts = _content_to_parts(content)
+                if parts:
+                    contents.append({"role": "user", "parts": parts})
+        body = self._default_body()
+        body["contents"] = contents or [{"role": "user", "parts": [{"text": "hi"}]}]
+        if system_parts:
+            body["systemInstruction"] = {"parts": system_parts}
+        if tools:
+            decls = []
+            for t in tools:
+                fn = (t or {}).get("function", {}) if isinstance(t, dict) else {}
+                decl = {"name": fn.get("name", "tool"), "description": fn.get("description", "")}
+                if fn.get("parameters"):
+                    decl["parameters"] = fn["parameters"]
+                decls.append(decl)
+            body["tools"] = [{"functionDeclarations": decls}]
+            cfg = {"mode": "AUTO"}
+            if tool_choice == "none":
+                cfg["mode"] = "NONE"
+            elif tool_choice == "required":
+                cfg["mode"] = "ANY"
+            elif isinstance(tool_choice, dict):
+                fn = (tool_choice.get("function") or {})
+                cfg["mode"] = "ANY"
+                if fn.get("name"):
+                    cfg["allowedFunctionNames"] = [fn["name"]]
+            body["toolConfig"] = {"functionCallingConfig": cfg}
+        return body
+
+    # -- interface ------------------------------------------------------------
+    def chat(self, prompt: str, model: str = "gemini-3.5-flash", stream: bool = False) -> ChatResult:
+        if model in self.CLOUDCODE_ONLY:
+            return ChatResult(
+                text="",
+                error=(
+                    f"模型 `{model}` 只存在於 Antigravity/cloudcode 通道，"
+                    "目前無法透過 Gemini API 提供。"
+                ),
+            )
+        api_model = self._api_model(model)
+        body = self._default_body()
+        body["contents"] = [{"role": "user", "parts": [{"text": prompt}]}]
+        resp = self._api_post(api_model, body)
+        if resp.get("__error__"):
+            return ChatResult(text="", error=resp["__error__"])
+        text, usage = _gemini_response_to_text(resp)
+        return ChatResult(text=text, model=model, usage=usage, raw=resp)
+
+    def chat_messages(
+        self, messages, model: str = "gemini-3.5-flash", stream: bool = False,
+        tools=None, tool_choice=None,
+    ) -> ChatResult:
+        if model in self.CLOUDCODE_ONLY:
+            return ChatResult(
+                text="",
+                error=(
+                    f"模型 `{model}` 只存在於 Antigravity/cloudcode 通道，"
+                    "目前無法透過 Gemini API 提供。"
+                ),
+            )
+        api_model = self._api_model(model)
+        resp = self._api_post(api_model, self._envelope_messages(messages, model, tools, tool_choice))
+        if resp.get("__error__"):
+            return ChatResult(text="", error=resp["__error__"])
+        text, usage = _gemini_response_to_text(resp)
+        finish = (resp.get("candidates") or [{}])[0].get("finishReason", "")
+        calls = self._extract_tool_calls(resp)
+        return ChatResult(
+            text=text,
+            model=model,
+            usage=usage,
+            raw=resp,
+            tool_calls=calls,
+            finish_reason="tool_calls" if calls else ("stop" if finish == "STOP" else ""),
+        )
+
+    def chat_messages_stream(self, messages, model: str = "gemini-3.5-flash", tools=None, tool_choice=None):
+        if model in self.CLOUDCODE_ONLY:
+            yield (
+                f"\n\n⚠️ 模型 `{model}` 只存在於 Antigravity/cloudcode 通道，"
+                "目前無法透過 Gemini API 提供。",
+                None,
+            )
+            return
+        api_model = self._api_model(model)
+        for raw in self._api_stream(api_model, self._envelope_messages(messages, model, tools, tool_choice)):
+            if not raw:
+                continue
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if event.get("__error__"):
+                yield f"\n\n[bridge: {event['__error__']}]", None
+                continue
+            for cand in event.get("candidates", []) or []:
+                for part in (cand.get("content") or {}).get("parts", []) or []:
+                    if part.get("text"):
+                        yield part["text"], None
+                    if part.get("inlineData"):
+                        d = part["inlineData"]
+                        yield "", {
+                            "type": "image",
+                            "mimeType": d.get("mimeType", "image/png"),
+                            "data": d.get("data", ""),
+                        }
+                    fc = part.get("functionCall")
+                    if fc:
+                        yield "", {
+                            "type": "tool_call",
+                            "tool_call": {
+                                "id": f"call_{abs(hash(fc.get('name', '')))}",
+                                "type": "function",
+                                "function": {
+                                    "name": fc.get("name", ""),
+                                    "arguments": json.dumps(fc.get("args", {}), ensure_ascii=False),
+                                },
+                            },
+                        }
+            if event.get("usageMetadata"):
+                yield "", {"usage": event["usageMetadata"]}
+
+
 def pick_backend(prefer: str | None = None) -> object:
     """Auto-select the best available backend (agy > direct > gemini > mock)."""
-    order = [AgyBackend(), DirectTokenBackend(), GeminiCliBackend()]
+    order = [AgyBackend(), GeminiApiBackend(), DirectTokenBackend(), GeminiCliBackend()]
     if prefer:
         for b in order:
             if b.name == prefer:

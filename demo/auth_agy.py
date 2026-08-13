@@ -162,16 +162,37 @@ def verify_agy() -> bool:
     return False
 
 
+PKCE_STATE_FILE = Path("/tmp/agy_pkce_state.json")
+
+
+def save_pkce_state(verifier: str, state: str) -> None:
+    PKCE_STATE_FILE.write_text(json.dumps({"verifier": verifier, "state": state}))
+
+
+def load_pkce_state() -> dict:
+    if PKCE_STATE_FILE.exists():
+        return json.loads(PKCE_STATE_FILE.read_text())
+    return {}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Authenticate agy with your Google account (manual PKCE flow)")
     ap.add_argument("--url", action="store_true", help="print the sign-in URL and exit")
     ap.add_argument("--code", help="authorization code (or full callback URL) to exchange")
     args = ap.parse_args()
 
-    verifier = make_pkce()[0]
-    url = build_auth_url(verifier)
+    saved = load_pkce_state() if args.code else {}
+    if saved:
+        verifier = saved["verifier"]
+        url = build_auth_url(verifier)
+    else:
+        verifier = make_pkce()[0]
+        url = build_auth_url(verifier)
 
     if args.url:
+        # persist verifier so --code (possibly hours later, another process)
+        # can complete the PKCE exchange
+        save_pkce_state(verifier, url)
         print(url)
         return 0
 

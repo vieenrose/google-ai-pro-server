@@ -1,4 +1,4 @@
-# Plugin settings for discourse-gemini
+# Plugin settings for discourse-deep-research (keys kept from discourse-gemini for migration continuity)
 
 discourse_gemini:
   gemini_enabled:

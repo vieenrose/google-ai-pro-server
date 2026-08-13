@@ -1,12 +1,18 @@
-# Plugin: Discourse Gemini (AI Pro)
-# Lets forum users summon Gemini into a topic (@gemini …) or trigger Deep
-# Research (/deep …). Backed by the local bridge (bridge/server.py), which
-# consumes your Google AI Pro subscription via the Antigravity CLI — no Gemini
-# API key.
+# Plugin: Google Deep Research for Discourse
+# Lets forum users trigger Deep Research in a topic (@deep-research … or
+# /deep …). The research report (sub-questions → verification → sourced
+# report) is produced by the local bridge (bridge/server.py), which consumes
+# your Google AI Pro subscription. No Gemini API key required by the plugin
+# itself; the bridge holds the model configuration.
+#
+# NOTE: internal identifiers (setting keys gemini_*, module DiscourseGemini,
+# job names, the discourse-gemini-bot-post CSS class) were intentionally kept
+# from the former "discourse-gemini" plugin so existing forum data and stored
+# settings survive the rename untouched.
 
-# name: discourse-gemini
-# about: Summon Gemini (@gemini) and run Deep Research (/deep) using your Google AI Pro subscription
-# version: 0.1.0
+# name: discourse-deep-research
+# about: Deep Research for Discourse (@deep-research / /deep) powered by your Google AI Pro subscription
+# version: 0.2.0
 # authors: Luigi LIU
 # url: https://github.com/vieenrose/google-ai-pro-server
 
@@ -14,7 +20,7 @@ enabled_site_setting :gemini_enabled
 
 register_asset "stylesheets/gemini.scss"
 
-load File.expand_path("../lib/gemini_bridge.rb", __FILE__)
+load File.expand_path("../lib/deep_research_bridge.rb", __FILE__)
 
 # jobs auto-load via Discourse plugin job autoloading
 
@@ -25,32 +31,6 @@ after_initialize do
   # We avoid relying on the `users.bot` column (not present in all Discourse
   # versions) and instead mark the bot with a custom field + username check.
   BOT_FIELD = "discourse_gemini_bot"
-
-  def create_gemini_bot!
-    username = SiteSetting.gemini_bot_username.presence || "gemini"
-    user = User.find_by(username: username)
-    if user
-      mark_as_bot(user)
-      return user
-    end
-    begin
-      User.transaction do
-        user = User.create!(
-          username: username,
-          name: "Gemini",
-          email: "#{username}@discourse-gemini.invalid",
-          active: true,
-          approved: true,
-          trust_level: TrustLevel.levels[:leader],
-        )
-        user.activate
-      end
-      mark_as_bot(user)
-    rescue ActiveRecord::RecordInvalid, PG::UniqueViolation
-      user = User.find_by(username: username) || Discourse.system_user
-    end
-    user
-  end
 
   def mark_as_bot(user)
     user.custom_fields[BOT_FIELD] = true
@@ -63,20 +43,18 @@ after_initialize do
     # custom_fields may not be saved for system user — that's fine
   end
 
-  def gemini_bot?(user)
+  def deep_research_bot?(user)
     return false if user.blank?
     user.id == Discourse::SYSTEM_USER_ID ||
-      user.username == SiteSetting.gemini_bot_username.to_s ||
+      user.username == "deep-research" ||
       user.custom_fields[BOT_FIELD] == true
   end
-
-  create_gemini_bot!
 
   # ── permission + rate-limit helpers ───────────────────────────────────────
   module ::DiscourseGemini
     def self.allowed_for?(user)
       return false if user.blank?
-      return false if gemini_bot?(user)
+      return false if deep_research_bot?(user)
       groups = SiteSetting.gemini_allowed_groups
       return true if groups.blank?
       group_ids = Group.where(name: groups.split("|")).pluck(:id)
@@ -97,10 +75,8 @@ after_initialize do
       PluginStore.set("discourse_gemini", key, used + count)
     end
 
-    def self.post_as_bot(topic_id:, raw:, title: nil, username: nil)
-      bot =
-        User.find_by(username: username.presence || SiteSetting.gemini_bot_username) ||
-          Discourse.system_user
+    def self.post_as_bot(topic_id:, raw:, title: nil, username: "deep-research")
+      bot = User.find_by(username: username) || Discourse.system_user
       cooked = "<div class=\"discourse-gemini-bot-post\">\n\n#{raw}\n\n</div>"
       PostCreator.new(
         bot,
@@ -111,7 +87,7 @@ after_initialize do
       ).create!
     end
 
-    def self.run_job(user, post, kind, payload)
+    def self.run_job(user, post, payload)
       if !allowed_for?(user)
         Jobs.enqueue(:gemini_notice, post_id: post.id,
                      text: I18n.t("discourse_gemini.not_allowed"))
@@ -123,8 +99,7 @@ after_initialize do
         return
       end
       record_use(user, 1)
-      args = payload.merge(post_id: post.id, kind: kind)
-      Jobs.enqueue(kind == "deep" ? :gemini_deep_research : :gemini_reply, args)
+      Jobs.enqueue(:gemini_deep_research, payload.merge(post_id: post.id))
     end
 
     def self.ensure_deep_research_bot!
@@ -153,29 +128,20 @@ after_initialize do
       end
       user
     end
-
-    def self.gemini_bot?(user)
-      return false if user.blank?
-      user.id == Discourse::SYSTEM_USER_ID ||
-        user.username == SiteSetting.gemini_bot_username.to_s ||
-        user.custom_fields[BOT_FIELD] == true
-    end
   end
 
   ::DiscourseGemini.ensure_deep_research_bot!
 
-  # ── trigger: detect @gemini / @deep-research / /deep in new posts ─────────
+  # ── trigger: detect @deep-research / /deep in new posts ───────────────────
   on(:post_created) do |post, _opts, user|
     next unless SiteSetting.gemini_enabled
-    next if user.blank? || DiscourseGemini.gemini_bot?(user)
+    next if user.blank? || deep_research_bot?(user)
     raw = post.raw.to_s
 
     if raw =~ /\A@deep-research[:\s]+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
-      DiscourseGemini.run_job(user, post, "deep", { topic: $1.strip })
+      DiscourseGemini.run_job(user, post, { topic: $1.strip })
     elsif raw =~ /\A\/deep\s+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
-      DiscourseGemini.run_job(user, post, "deep", { topic: $1.strip })
-    elsif raw =~ /\A@gemini[:\s]+(.+)\z/m
-      DiscourseGemini.run_job(user, post, "chat", { prompt: $1.strip })
+      DiscourseGemini.run_job(user, post, { topic: $1.strip })
     end
   end
 end

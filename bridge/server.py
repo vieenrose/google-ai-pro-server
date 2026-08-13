@@ -348,7 +348,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Gemini bridge for Discourse")
     ap.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8787)))
     ap.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
-    ap.add_argument("--backend", choices=["agy", "direct", "gemini", "mock"],
+    ap.add_argument("--backend", choices=["agy", "direct", "gemini-api", "gemini", "mock"],
                     default=os.environ.get("BACKEND"))
     ap.add_argument("--token", default=os.environ.get("BRIDGE_TOKEN", ""))
     args = ap.parse_args()

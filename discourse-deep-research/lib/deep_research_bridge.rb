@@ -3,10 +3,9 @@
 require "net/http"
 require "json"
 
-# Thin HTTP client for the local Gemini bridge (bridge/server.py).
-# The bridge wraps the Antigravity CLI (agy) which consumes the Google AI Pro
-# subscription — chat replies and Deep Research reports come from real,
-# search-grounded Gemini.
+# Thin HTTP client for the local bridge (bridge/server.py).
+# The bridge wraps your Google AI Pro subscription (via the Gemini API or the
+# Antigravity CLI) and exposes /v1/deep-research for the Deep Research plugin.
 class GeminiBridge
   class Error < StandardError; end
 
