@@ -1176,8 +1176,11 @@ class AntigravityAppBackend(GeminiApiBackend):
             except Exception:
                 message = e.read().decode(errors="replace")[:500]
             if e.code == 429:
+                import re as _re
+                m = _re.search(r"reset after ([0-9]+h[0-9]+m[0-9]+s)", message)
+                hint = f"（約 {m.group(1)} 後恢復）" if m else ""
                 return {
-                    "__error__": "模型暫時繁忙（伺服器容量限制，非訂閱額度）。請稍後重試。"
+                    "__error__": f"模型暫時繁忙（伺服器容量限制，非訂閱額度）{hint}。請稍後重試。"
                 }
             return {"__error__": f"Antigravity app HTTP {e.code}: {message[:500]}"}
         except Exception as e:  # noqa: BLE001
@@ -1202,7 +1205,15 @@ class AntigravityAppBackend(GeminiApiBackend):
                 yield from self._stream(method, payload, timeout, _attempt + 1)
                 return
             if e.code == 429:
-                yield {"__error__": "模型暫時繁忙（伺服器容量限制，非訂閱額度）。請稍後重試。"}
+                import re as _re
+                try:
+                    body = self._decode_response(e.read(), e.headers)
+                    message = body.get("error", {}).get("message", str(body))
+                except Exception:
+                    message = e.read().decode(errors="replace")[:500]
+                m = _re.search(r"reset after ([0-9]+h[0-9]+m[0-9]+s)", message)
+                hint = f"（約 {m.group(1)} 後恢復）" if m else ""
+                yield {"__error__": f"模型暫時繁忙（伺服器容量限制，非訂閱額度）{hint}。請稍後重試。"}
                 return
             try:
                 body = self._decode_response(e.read(), e.headers)
