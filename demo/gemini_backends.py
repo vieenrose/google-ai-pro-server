@@ -1263,16 +1263,13 @@ class AntigravityAppBackend(GeminiApiBackend):
         generation = dict(body.get("generationConfig") or {})
         if "maxOutputTokens" not in generation and model_config.get("maxOutputTokens"):
             generation["maxOutputTokens"] = model_config["maxOutputTokens"]
-        # Keep the visible thinking block bounded so a long internal thought
-        # cannot consume the whole answer budget. The app model catalog exposes
-        # a small default thinking budget for its thinking-capable models.
         if model_config.get("supportsThinking") and "thinkingConfig" not in generation:
-            # Bound the internal thinking budget but DO NOT include the thought
-            # text in the output — via the OpenAI bridge we cannot render it as
-            # a separate <details> block, so it would leak raw reasoning into
-            # the reply (observed with Claude and Gemini).
+            # Budget must be >= 1024 (server constraint). includeThoughts returns the
+            # reasoning as parts flagged with `thought`, which we fold into a
+            # <details class='ai-thinking'> block in the reply (same as Gemini).
             generation["thinkingConfig"] = {
-                "thinkingBudget": min(int(model_config.get("thinkingBudget") or 1024), 2048),
+                "thinkingBudget": max(int(model_config.get("thinkingBudget") or 1024), 1024),
+                "includeThoughts": True,
             }
         if app_model == "gemini-3.1-flash-image":
             generation.setdefault("responseModalities", ["TEXT", "IMAGE"])
@@ -1347,6 +1344,26 @@ class AntigravityAppBackend(GeminiApiBackend):
             f"- [{title}]({uri})" for uri, title in links[:10]
         )
 
+    @staticmethod
+    def _extract_text_with_thinking(response: dict) -> str:
+        thinking, answer = [], []
+        for cand in response.get("candidates", []) or []:
+            for part in (cand.get("content") or {}).get("parts", []) or []:
+                if "thought" in part:
+                    if part.get("text"):
+                        thinking.append(part["text"])
+                elif part.get("text"):
+                    answer.append(part["text"])
+        out = ""
+        if thinking:
+            out += (
+                "<details class='ai-thinking'><summary>Thinking</summary>\n\n"
+                + "\n\n".join(thinking)
+                + "\n\n</details>\n\n"
+            )
+        out += "\n\n".join(answer)
+        return out
+
     def chat(self, prompt: str, model: str = "gemini-3.5-flash", stream: bool = False) -> ChatResult:
         return self.chat_messages([{"role": "user", "content": prompt}], model=model)
 
@@ -1359,14 +1376,14 @@ class AntigravityAppBackend(GeminiApiBackend):
             return ChatResult(text="", error=str(e))
         if response.get("__error__"):
             return ChatResult(text="", error=response["__error__"])
-        text, usage = _gemini_response_to_text(response)
+        text = self._extract_text_with_thinking(response)
         text += self._grounding_markdown(response)
         calls = self._extract_tool_calls(response)
         finish = (response.get("candidates") or [{}])[0].get("finishReason", "")
         return ChatResult(
             text=text,
             model=model,
-            usage=usage,
+            usage=response.get("usageMetadata", {}),
             raw=response,
             tool_calls=calls,
             finish_reason="tool_calls" if calls else ("stop" if finish == "STOP" else ""),
@@ -1379,6 +1396,7 @@ class AntigravityAppBackend(GeminiApiBackend):
             yield f"\n\n[bridge error: {e}]", None
             return
         grounding_response = None
+        in_thinking = False
         for event in self._stream("streamGenerateContent", payload):
             if event.get("__error__"):
                 yield f"\n\n[bridge error: {event['__error__']}]", None
@@ -1387,8 +1405,21 @@ class AntigravityAppBackend(GeminiApiBackend):
             grounding_response = response
             for cand in response.get("candidates", []) or []:
                 for part in (cand.get("content") or {}).get("parts", []) or []:
-                    if part.get("text"):
-                        yield part["text"], None
+                    is_thought = "thought" in part
+                    text = part.get("text", "")
+                    if is_thought:
+                        if not in_thinking:
+                            yield "\n\n<details class='ai-thinking'><summary>Thinking</summary>\n\n", None
+                            in_thinking = True
+                        if text:
+                            yield text, None
+                        continue
+                    # answer / non-thought part
+                    if in_thinking:
+                        yield "\n\n</details>\n\n", None
+                        in_thinking = False
+                    if text:
+                        yield text, None
                     if part.get("inlineData"):
                         data = part["inlineData"]
                         yield "", {
@@ -1411,6 +1442,8 @@ class AntigravityAppBackend(GeminiApiBackend):
                         }
             if response.get("usageMetadata"):
                 yield "", {"usage": response["usageMetadata"]}
+        if in_thinking:
+            yield "\n\n</details>\n\n", None
         if grounding_response:
             citations = self._grounding_markdown(grounding_response)
             if citations:
