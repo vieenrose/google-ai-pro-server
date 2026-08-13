@@ -1267,9 +1267,12 @@ class AntigravityAppBackend(GeminiApiBackend):
         # cannot consume the whole answer budget. The app model catalog exposes
         # a small default thinking budget for its thinking-capable models.
         if model_config.get("supportsThinking") and "thinkingConfig" not in generation:
+            # Bound the internal thinking budget but DO NOT include the thought
+            # text in the output — via the OpenAI bridge we cannot render it as
+            # a separate <details> block, so it would leak raw reasoning into
+            # the reply (observed with Claude and Gemini).
             generation["thinkingConfig"] = {
                 "thinkingBudget": min(int(model_config.get("thinkingBudget") or 1024), 2048),
-                "includeThoughts": True,
             }
         if app_model == "gemini-3.1-flash-image":
             generation.setdefault("responseModalities", ["TEXT", "IMAGE"])
