@@ -1114,9 +1114,11 @@ class AntigravityAppBackend(GeminiApiBackend):
         "gemini-3.1-flash-lite": "gemini-3.1-flash-lite",
         "gemini-3-flash": "gemini-3-flash",
         "gemini-3.1-pro": "gemini-3.1-pro-low",
+        "gemini-3.1-pro-preview": "gemini-3.1-pro-low",
         "gemini-2.5-pro": "gemini-2.5-pro",
         "claude-sonnet-4-6": "claude-sonnet-4-6",
         "claude-opus-4-6": "claude-opus-4-6-thinking",
+        "claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
         "gemini-3.1-flash-image": "gemini-3.1-flash-image",
     }
 
