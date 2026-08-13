@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import urllib.request
+import urllib.parse
 import sys
 import time
 import uuid
@@ -94,8 +95,9 @@ def upload_to_forum(mime_type: str, b64data: str) -> str:
             data = json.loads(r.read().decode())
         url = data.get("url") or ""
         if url:
-            if url.startswith("//"):
-                url = "https:" + url if FORUM_BASE.startswith("https") else "http:" + url
+            # Always emit a relative path (/uploads/...) so the image renders
+            # regardless of the host the viewer uses (LAN IP vs Tailscale).
+            url = urllib.parse.urlparse(url).path or url
             return f"![generated image]({url})"
     except Exception as e:  # noqa: BLE001
         sys.stderr.write(f"[bridge] upload failed: {e}\n")
