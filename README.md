@@ -24,9 +24,39 @@ End-to-end on a real Google AI Pro account:
 |---|---|
 | Gemini chat via `@ai_*` agents | ✅ subscription quota |
 | Google Search grounding (web-app style) | ✅ `googleSearch` + citations |
-| Gemini 3.1 **Pro** | ✅ (blocked on free tier, works on the app backend) |
+| Gemini 3.1 **Pro** / Claude Sonnet & Opus | ✅ (works on the app backend) |
 | `@deep-research` multi-phase report | ✅ 12.5k-char report, 39 web sources |
-| Image generation | ✅ `inlineData` (route preserved) |
+| Image generation (topic + instant chat) | ✅ inline rendering (relative URLs) |
+| Model thinking | ✅ folded in `<details class='ai-thinking'>` (Claude + Gemini) |
+| Multi-host access (LAN + Tailscale) | ✅ split-horizon DNS, hostname-based URLs |
+| Model footer tag (`— ⚙️ 由 X 驅動`) | 🗑️ removed — redundant with the `@ai_*` alias |
+
+## Multi-host access (LAN + Tailscale) — 2026-08-13
+
+The forum is reachable as `192.168.40.37` (LAN) and `raspberrypi` /
+`100.112.145.8` (Tailscale MagicDNS). A single canonical hostname cannot be
+two addresses, so the forum now references **one name — `raspberrypi`** — and
+each network resolves it its own way (split-horizon DNS):
+
+| Network | Resolution of `raspberrypi` |
+|---|---|
+| Tailscale | MagicDNS → `100.112.145.8` (built-in, stable) |
+| LAN | `dnsmasq` on the Pi (`address=/raspberrypi/192.168.40.37`) — LAN clients use the Pi as DNS (set on the router DHCP) |
+
+Discourse side:
+
+- `SiteSetting.force_hostname = "raspberrypi"` (runtime, overrides the env)
+- `DISCOURSE_HOSTNAME: "raspberrypi"` in `app.yml` for future rebuilds
+- posts rebaked — asset URLs (emoji, avatars, oneboxes) now bake
+  **relative** or `//raspberrypi/…`, so they render on both networks
+
+**Why hostnames, not IPs:** the LAN IP is DHCP-assigned and can change.
+Because Discourse/posts/bridge now reference the *name*, an IP change only
+needs one line updated in `/etc/dnsmasq.d/raspberrypi.conf` — no rebuild, no
+rebake. Pinning the IP via a router DHCP reservation removes even that.
+
+The bridge uploads generated images with **relative URLs**
+(`/uploads/...`) for the same reason (see `upload_to_forum`).
 
 ## Antigravity application backend (2026-08-13)
 
