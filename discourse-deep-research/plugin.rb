@@ -139,6 +139,31 @@ after_initialize do
 
   ::DiscourseGemini.ensure_deep_research_bot!
 
+  # ── chat rendering fix ───────────────────────────────────────────────────
+  # Chat's markdown does not render <details> HTML, so the folded ai-thinking
+  # block leaks as raw text in chat messages. Strip it from the cooked output
+  # of bot chat messages (topics render it folded; chat shows the clean
+  # answer only). The raw message keeps the thinking for reference.
+  on(:chat_message_processed) do |doc, message|
+    next if message.user_id.to_i >= 0
+    paragraphs = doc.css("p")
+    i = 0
+    while i < paragraphs.length
+      text = paragraphs[i].text.to_s
+      if text.include?("<details class='ai-thinking'")
+        paragraphs[i].remove
+        i += 1
+        while i < paragraphs.length && !paragraphs[i].text.to_s.include?("</details>")
+          paragraphs[i].remove
+          i += 1
+        end
+        paragraphs[i].remove if i < paragraphs.length
+        break
+      end
+      i += 1
+    end
+  end
+
   # ── trigger: detect @deep-research / /deep in new posts ───────────────────
   on(:post_created) do |post, _opts, user|
     next unless SiteSetting.gemini_enabled
