@@ -246,6 +246,7 @@ AI Pro subscription quota.
 | Forum slug | App model | Verified |
 |---|---|---|
 | `gemini-3.6-flash` | `gemini-3.6-flash-low` | ✅ text, streaming, functionCall, web search |
+| `gemini-3.7-flash` | — | ⏳ **released but not yet on the Antigravity app backend** (404 on generateContent, checked 2026-08-13). It IS available on the Gemini API free-tier key, but this forum runs subscription-only — the alias is pre-wired and will light up automatically once the app catalog includes it. |
 | `gemini-3.5-flash` | `gemini-3.5-flash-low` | ✅ |
 | `gemini-2.5-flash` → `gemini-3.1-flash-lite` | `gemini-3.1-flash-lite` | ✅ (alias; also the web-search-capable model id) |
 | `gemini-3.1-pro` | `gemini-3.1-pro-low` | ✅ **Pro on subscription quota** |
