@@ -58,6 +58,32 @@ rebake. Pinning the IP via a router DHCP reservation removes even that.
 The bridge uploads generated images with **relative URLs**
 (`/uploads/...`) for the same reason (see `upload_to_forum`).
 
+## AI reply rules (forum behavior) — 2026-08-14
+
+Implemented in the discourse-ai patch (upstream PR #42536) + the
+discourse-deep-research plugin, and validated live in the testing area.
+
+| Rule | Behavior |
+|---|---|
+| **R1 — nesting** | The AI answer is posted at the same depth as the request: a request in a new post → answer in a new post; a request in a reply to post X → answer as a reply to X (sibling of the request). |
+| **R2 — single responder** | In any post, the FIRST explicitly mentioned AI (in typing order) handles the request. Only one responder, ever. |
+| **R3 — no proactive replies** | Replying to an AI's post without mentioning anyone does NOT trigger that AI (public topics). Mentions are the only trigger. |
+| **R4 — AI posts may summon (one hop)** | If an AI's own post explicitly mentions an agent (e.g. a model writing "I'll ask @ai_x to regenerate"), that agent is triggered — but only when the AI post directly follows a human post. Bot→bot chains are impossible. |
+| **Q — quotes don't count** | Mentions inside `[quote]` blocks are ignored — only what the user actually typed can trigger. |
+| **PMs** | Keep the stock dynamic: a bot invited to a private message may answer messages that do not mention it. |
+
+Trigger matrix (public topics):
+
+| Post type | No mention | AI mention |
+|---|---|---|
+| New post | nothing | first mentioned answers |
+| Reply to human | nothing | first mentioned answers |
+| Reply to AI | nothing (R3) | first mentioned answers (R2) |
+| AI post after a human post | nothing | mentioned agent answers (R4, one hop) |
+
+Queue hardening: per-post dedup lock (`ai_reply_dedup:<post_id>`), deep
+research runs on the `low` Sidekiq queue so it cannot block instant replies.
+
 ## Antigravity application backend (2026-08-13)
 
 ### Why this is the answer

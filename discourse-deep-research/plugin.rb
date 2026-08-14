@@ -82,12 +82,13 @@ after_initialize do
       PluginStore.set("discourse_gemini", key, used + count)
     end
 
-    def self.post_as_bot(topic_id:, raw:, title: nil, username: "deep-research")
+    def self.post_as_bot(topic_id:, raw:, title: nil, username: "deep-research", reply_to_post_number: nil)
       bot = User.find_by(username: username) || Discourse.system_user
       cooked = "<div class=\"discourse-gemini-bot-post\">\n\n#{raw}\n\n</div>"
       PostCreator.new(
         bot,
         topic_id: topic_id,
+        reply_to_post_number: reply_to_post_number,
         raw: cooked,
         skip_validations: true,
         guardian: Guardian.new(bot),

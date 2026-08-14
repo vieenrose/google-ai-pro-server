@@ -4,7 +4,7 @@ module ::Jobs
   # Runs Gemini Deep Research (/deep topic) in the background and posts the
   # cited report when it finishes (1–5 minutes).
   class GeminiDeepResearch < ::Jobs::Base
-    sidekiq_options retry: 1
+    sidekiq_options retry: 1, queue: "low"
 
     def execute(args)
       post = Post.find_by(id: args[:post_id])
@@ -13,6 +13,7 @@ module ::Jobs
       # let the user know it started
       DiscourseGemini.post_as_bot(
         topic_id: post.topic_id,
+        reply_to_post_number: post.reply_to_post_number,
         raw: I18n.t("discourse_gemini.deep_started"),
         username: "deep-research",
       )
@@ -38,7 +39,7 @@ module ::Jobs
         MD
       end
 
-      DiscourseGemini.post_as_bot(topic_id: post.topic_id, raw: raw, username: "deep-research")
+      DiscourseGemini.post_as_bot(topic_id: post.topic_id, reply_to_post_number: post.reply_to_post_number, raw: raw, username: "deep-research")
     end
   end
 end
