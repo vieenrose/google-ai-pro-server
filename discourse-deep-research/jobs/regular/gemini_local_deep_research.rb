@@ -22,7 +22,16 @@ module ::Jobs
       if result["error"].present?
         raw = I18n.t("discourse_gemini.error", error: result["error"].to_s[0, 500])
       else
-        sources = (result["sources"] || []).map.with_index(1) { |u, i| "[#{i}] #{u}" }.join("\n")
+        sources =
+          (result["sources"] || []).map.with_index(1) do |s, i|
+            if s.is_a?(Hash)
+              title = s["title"].presence || s["snippet"].to_s.truncate(80).presence || "source"
+              url = s["url"].presence || s["link"].presence || s["id"].presence
+              url.present? ? "[#{i}] #{title} — #{url}" : "[#{i}] #{title}"
+            else
+              "[#{i}] #{s}"
+            end
+          end.join("\n")
         raw = <<~MD
           # 🔬 Local Deep Research: #{args[:topic]}
 
