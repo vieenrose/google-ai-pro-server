@@ -8,6 +8,7 @@ module DiscourseGemini
   class QuotaController < ::ApplicationController
     skip_before_action :redirect_to_login_if_required
     skip_before_action :check_xhr
+    layout "no_ember" # plain page — the Ember app must NOT boot on these URLs
 
     def index
       @quota = GeminiBridge.new.quota
@@ -15,7 +16,6 @@ module DiscourseGemini
     rescue StandardError => e
       @quota = nil
       @error = e.message
-      render layout: "no_ember"
     end
   end
 end
