@@ -34,6 +34,9 @@ from deep_research import run_research  # noqa: E402
 
 import re as _re
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import searxng  # noqa: E402
+
 IMAGE_GEN_MODEL = "gemini-3.1-flash-image"
 IMAGE_GEN_PATTERNS = [
     r"畫一張", r"畫個", r"生成圖片", r"生成一張", r"生成图像", r"繪製", r"繪畫", r"插圖",
@@ -144,8 +147,98 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 "backend_info": getattr(b, "describe", lambda: "")()[:120],
                 "time": time.time(),
             })
+        elif self.path == "/api/quota":
+            try:
+                self._send(200, self.backend.quota())
+            except Exception as e:  # noqa: BLE001
+                self._send(502, {"error": str(e)})
+        elif self.path == "/quota" or self.path.startswith("/quota?"):
+            try:
+                data = self.backend.quota()
+            except Exception as e:  # noqa: BLE001
+                body = (f"<!doctype html><html><body style='font-family:sans-serif;padding:2em'>"
+                        f"<h2>⚠️ 無法讀取配額</h2><p>{e}</p><meta http-equiv='refresh' content='60'>"
+                        f"</body></html>").encode()
+                self._send_html(body)
+                return
+            self._send_html(self._quota_page(data))
         else:
             self._send(404, {"error": "not found"})
+
+    def _send_html(self, body: bytes) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    @staticmethod
+    def _quota_page(data: dict) -> bytes:
+        import html as _html
+        rows = []
+        for m in data.get("models", []):
+            frac = float(m.get("remaining", 0))
+            pct = frac * 100
+            if frac > 0.5:
+                color = "#16a34a"
+            elif frac > 0.1:
+                color = "#ca8a04"
+            else:
+                color = "#dc2626"
+            rows.append(
+                "<tr>"
+                f"<td>{_html.escape(m.get('name', ''))}<div class='key'>{_html.escape(m.get('key', ''))}</div></td>"
+                "<td class='bar-cell'><div class='bar'><div class='fill' "
+                f"style='width:{pct:.1f}%;background:{color}'></div></div>"
+                f"<span class='pct'>{pct:.2f}%</span></td>"
+                f"<td class='reset' data-reset='{_html.escape(m.get('reset_time', ''))}'>—</td>"
+                "</tr>"
+            )
+        fetched = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(data.get("fetched_at", time.time())))
+        rows_html = "\n".join(rows)
+        html = f"""<!doctype html>
+<html lang="zh-TW"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60">
+<title>Antigravity 配額監視</title>
+<style>
+ body {{ font-family: -apple-system, 'Segoe UI', 'Noto Sans TC', sans-serif; margin: 0;
+        background: #0f172a; color: #e2e8f0; }}
+ .wrap {{ max-width: 860px; margin: 0 auto; padding: 24px 16px; }}
+ h1 {{ font-size: 20px; margin: 0 0 4px; }}
+ .sub {{ color: #94a3b8; font-size: 13px; margin-bottom: 20px; }}
+ table {{ width: 100%; border-collapse: collapse; }}
+ th {{ text-align: left; font-size: 12px; color: #94a3b8; padding: 8px;
+      border-bottom: 1px solid #1e293b; }}
+ td {{ padding: 10px 8px; border-bottom: 1px solid #1e293b; font-size: 14px; }}
+ .key {{ color: #64748b; font-size: 11px; font-family: monospace; }}
+ .bar {{ background: #1e293b; border-radius: 6px; height: 10px; min-width: 180px; overflow: hidden; }}
+ .fill {{ height: 100%; border-radius: 6px; }}
+ .pct {{ font-variant-numeric: tabular-nums; margin-left: 8px; font-size: 13px; }}
+ .reset {{ color: #94a3b8; font-variant-numeric: tabular-nums; font-size: 13px; }}
+ .warn {{ color: #fca5a5; }}
+</style></head><body><div class="wrap">
+<h1>🧪 Antigravity 配額監視</h1>
+<div class="sub">每 60 秒自動更新 · 資料擷取於 {fetched}（本機時間）· 來源：fetchAvailableModels/quotaInfo</div>
+<table><thead><tr><th>模型</th><th>剩餘額度</th><th>重設倒數</th></tr></thead><tbody>
+{rows_html}
+</tbody></table></div>
+<script>
+function tick() {{
+  document.querySelectorAll('td.reset').forEach(el => {{
+    const iso = el.dataset.reset;
+    if (!iso) {{ el.textContent = '—'; return; }}
+    const t = new Date(iso).getTime() - Date.now();
+    if (t <= 0) {{ el.textContent = '已重設 ✓'; el.classList.add('warn'); return; }}
+    const s = Math.floor(t / 1000);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    el.textContent = h + 'h ' + m + 'm ' + sec + 's';
+    if (s < 900) el.classList.add('warn');
+  }});
+}}
+tick(); setInterval(tick, 1000);
+</script></body></html>"""
+        return html.encode()
 
     def do_POST(self):
         if not self._authed():
@@ -211,8 +304,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if not messages:
             self._error(400, "messages required", "invalid_request_error")
             return
+
+        # web search injection for models without native grounding (non-Gemini)
+        messages, web_results = searxng.inject(messages, model)
+
         if body.get("stream"):
-            self._stream_completions(messages, model, tools=tools, tool_choice=tool_choice)
+            self._stream_completions(
+                messages, model, tools=tools, tool_choice=tool_choice, web_results=web_results
+            )
             return
 
         try:
@@ -223,6 +322,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if result.error:
             self._error(502, result.error, "upstream_error")
             return
+
+        if web_results:
+            result.text = result.text.rstrip() + searxng.sources_markdown(web_results)
 
         usage = result.usage or {}
         message = {"role": "assistant", "content": result.text or None}
@@ -246,7 +348,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         }
         self._send(200, resp)
 
-    def _stream_completions(self, messages, model, tools=None, tool_choice=None) -> None:
+    def _stream_completions(self, messages, model, tools=None, tool_choice=None, web_results=None) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -294,19 +396,56 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         _images = []
+        _buf = []  # final-attempt (text|tool) chunks, emitted once (no duplicates)
+        image_requested = (model == IMAGE_GEN_MODEL) or looks_like_image_request(messages)
+        attempts = 2 if image_requested else 1
+        attempt_exc = None
         try:
             chunk(role_done=True)
-            for delta, meta in self.backend.chat_messages_stream(messages, model=model, tools=tools, tool_choice=tool_choice):
-                if delta:
-                    chunk(delta_text=delta)
-                if meta and meta.get("type") == "tool_call":
-                    tool_chunk(meta["tool_call"])
-                if meta and meta.get("type") == "image":
-                    _images.append(meta)
+            for attempt in range(attempts):
+                attempt_buf = []
+                attempt_imgs = []
+                got_error = False
+                try:
+                    for delta, meta in self.backend.chat_messages_stream(messages, model=model, tools=tools, tool_choice=tool_choice):
+                        if delta:
+                            if isinstance(delta, str) and "[bridge error:" in delta:
+                                got_error = True
+                            attempt_buf.append(("text", delta))
+                        if meta and meta.get("type") == "tool_call":
+                            attempt_buf.append(("tool", meta["tool_call"]))
+                        if meta and meta.get("type") == "image":
+                            attempt_imgs.append(meta)
+                except Exception as e:  # noqa: BLE001 — read timeout etc.: retry next attempt
+                    attempt_exc = e
+                else:
+                    attempt_exc = None
+                    _buf = attempt_buf
+                    _images = attempt_imgs
+                    if not image_requested or _images or got_error:
+                        break
+                if attempt + 1 < attempts:
+                    time.sleep(2)
+            if attempt_exc is not None and not _buf and not _images:
+                raise attempt_exc
+            for kind, payload in _buf:
+                if kind == "text" and payload:
+                    chunk(delta_text=payload)
+                elif kind == "tool":
+                    tool_chunk(payload)
+            upload_failures = 0
             for img in _images:
                 md = upload_to_forum(img.get("mimeType", "image/png"), img.get("data", ""))
                 if md:
                     chunk(delta_text="\n\n" + md)
+                else:
+                    upload_failures += 1
+            if image_requested and not _images:
+                chunk(delta_text="\n\n⚠️ 上游影像模型未回傳圖片（可能暫時過載或安全過濾），已重試一次仍失敗，請稍後再試。")
+            elif image_requested and upload_failures:
+                chunk(delta_text="\n\n⚠️ 圖片已生成但上傳至論壇失敗，請稍後重試。")
+            if web_results:
+                chunk(delta_text=searxng.sources_markdown(web_results))
             chunk(finish="stop")
         except Exception as e:  # noqa: BLE001
             try:

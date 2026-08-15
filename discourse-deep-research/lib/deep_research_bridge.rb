@@ -35,6 +35,11 @@ class GeminiBridge
     false
   end
 
+  # GET /api/quota → { fetched_at:, models: [{key, name, remaining, reset_time}] }
+  def quota
+    get("/api/quota")
+  end
+
   private
 
   def get(path)

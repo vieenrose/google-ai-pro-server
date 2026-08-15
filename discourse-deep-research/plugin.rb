@@ -22,6 +22,8 @@ register_asset "stylesheets/gemini.scss"
 
 load File.expand_path("../lib/deep_research_bridge.rb", __FILE__)
 
+add_admin_route "discourse_gemini.quota.title", "antigravity-quota"
+
 # jobs auto-load via Discourse plugin job autoloading
 
 after_initialize do
@@ -162,6 +164,16 @@ after_initialize do
         break
       end
       i += 1
+    end
+  end
+
+  # ── admin quota monitor page ──────────────────────────────────────────────
+  # Server-rendered page (no Ember/assets) that reads the bridge's /api/quota.
+  # The appended route shadows core's /admin/plugins/:plugin_id for this slug.
+  Discourse::Application.routes.append do
+    scope "/admin/plugins", constraints: AdminConstraint.new do
+      get "/antigravity-quota" => "discourse_gemini/admin_quota#index"
+      get "/antigravity-quota/full" => "discourse_gemini/admin_quota#index"
     end
   end
 

@@ -763,7 +763,7 @@ def _http_post(url: str, body: bytes, access_token: str, timeout: int = 120) -> 
         return e.code, e.read().decode()
 
 
-def _http_post_stream(url: str, body: bytes, access_token: str, timeout: int = 300):
+def _http_post_stream(url: str, body: bytes, access_token: str, timeout: int = 120):
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Authorization", f"Bearer {access_token}")
     req.add_header("Content-Type", "application/json")
@@ -1063,7 +1063,9 @@ class GeminiApiBackend:
             if event.get("__error__"):
                 yield f"\n\n[bridge: {event['__error__']}]", None
                 continue
-            for cand in event.get("candidates", []) or []:
+            # Only the first candidate — upstream occasionally returns two
+            # candidates with identical text, which duplicated bot replies.
+            for cand in (event.get("candidates") or [])[:1]:
                 for part in (cand.get("content") or {}).get("parts", []) or []:
                     if part.get("text"):
                         yield part["text"], None
@@ -1188,7 +1190,36 @@ class AntigravityAppBackend(GeminiApiBackend):
         except Exception as e:  # noqa: BLE001
             return {"__error__": f"Antigravity app request failed: {e}"}
 
-    def _stream(self, method: str, payload: dict, timeout: int = 300, _attempt: int = 0):
+    def quota(self) -> dict:
+        """Per-model subscription quota from the Antigravity control plane.
+
+        Returns {fetched_at, models: [{key, name, remaining, reset_time}]}
+        cached for 60s. Mirrors the Antigravity Quota Monitor VS Code
+        extension (same fetchAvailableModels + quotaInfo source).
+        """
+        now = time.time()
+        if getattr(self, "_quota_cache", None) and now - self._quota_cache["t"] < 60:
+            return self._quota_cache["data"]
+        response = self._post("fetchAvailableModels", {"project": self._project()})
+        if response.get("__error__"):
+            raise RuntimeError(response["__error__"])
+        models = []
+        for key, cfg in sorted((response.get("models") or {}).items()):
+            q = cfg.get("quotaInfo") or {}
+            frac = q.get("remainingFraction")
+            if frac is None:
+                continue
+            models.append({
+                "key": key,
+                "name": cfg.get("displayName") or key,
+                "remaining": round(float(frac), 4),
+                "reset_time": q.get("resetTime") or "",
+            })
+        data = {"fetched_at": now, "models": models}
+        self._quota_cache = {"t": now, "data": data}
+        return data
+
+    def _stream(self, method: str, payload: dict, timeout: int = 120, _attempt: int = 0):
         req = urllib.request.Request(
             f"{self.ENDPOINT}/v1internal:{method}?alt=sse",
             data=json.dumps(payload, ensure_ascii=False).encode(),
@@ -1416,7 +1447,9 @@ class AntigravityAppBackend(GeminiApiBackend):
                 continue
             response = self._response_body(event)
             grounding_response = response
-            for cand in response.get("candidates", []) or []:
+            # Only the first candidate — upstream occasionally returns two
+            # candidates with identical text, which duplicated bot replies.
+            for cand in (response.get("candidates") or [])[:1]:
                 for part in (cand.get("content") or {}).get("parts", []) or []:
                     is_thought = "thought" in part
                     text = part.get("text", "")

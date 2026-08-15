@@ -1,4 +1,7 @@
 en:
+  discourse_gemini:
+    quota:
+      title: "Antigravity Quota"
   admin_js:
     admin:
       site_settings:

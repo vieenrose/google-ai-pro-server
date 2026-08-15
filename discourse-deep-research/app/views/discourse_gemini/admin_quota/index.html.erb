@@ -1,0 +1,72 @@
+<%- # Antigravity quota monitor — server-rendered, no asset pipeline. -%>
+<style>
+  .agq-wrap { max-width: 900px; padding: 8px 0 24px; font-size: 14px; }
+  .agq-wrap table { width: 100%; border-collapse: collapse; }
+  .agq-wrap th { text-align: left; font-size: 12px; color: var(--primary-medium, #666);
+                 padding: 6px 8px; border-bottom: 1px solid var(--primary-low, #ddd); }
+  .agq-wrap td { padding: 8px; border-bottom: 1px solid var(--primary-low, #ddd);
+                 vertical-align: middle; }
+  .agq-key { color: var(--primary-medium, #777); font-size: 11px; font-family: monospace; }
+  .agq-bar { background: var(--primary-low, #e5e5e5); border-radius: 5px; height: 10px;
+             min-width: 180px; overflow: hidden; }
+  .agq-fill { height: 100%; border-radius: 5px; }
+  .agq-pct { margin-left: 8px; font-variant-numeric: tabular-nums; font-size: 13px; }
+  .agq-reset { color: var(--primary-medium, #777); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .agq-warn { color: #c00; }
+  .agq-sub { color: var(--primary-medium, #777); font-size: 13px; margin-bottom: 14px; }
+  .agq-error { background: #fdecea; border: 1px solid #f5c6c6; color: #a33; padding: 12px; border-radius: 6px; }
+</style>
+
+<div class="agq-wrap">
+  <h2>🧪 Antigravity 配額監視 / Quota Monitor</h2>
+
+  <% if @error %>
+    <div class="agq-error">⚠️ 無法讀取配額：<%= @error %></div>
+  <% elsif @quota && @quota["models"].present? %>
+    <div class="agq-sub">
+      資料擷取於 <%= Time.at(@quota["fetched_at"]).in_time_zone.strftime("%Y-%m-%d %H:%M:%S") %>（本機時間）·
+      來源 fetchAvailableModels/quotaInfo ·
+      <a href="/admin/plugins/antigravity-quota" data-auto-route-alt="">重新整理</a>
+    </div>
+    <table>
+      <thead><tr><th>模型</th><th>剩餘額度</th><th>重設倒數</th></tr></thead>
+      <tbody>
+      <% @quota["models"].each do |m| %>
+        <% frac = m["remaining"].to_f; pct = frac * 100.0
+           color = frac > 0.5 ? "#16a34a" : (frac > 0.1 ? "#ca8a04" : "#dc2626") %>
+        <tr>
+          <td>
+            <%= m["name"] %>
+            <div class="agq-key"><%= m["key"] %></div>
+          </td>
+          <td>
+            <div class="agq-bar"><div class="agq-fill" style="width:<%= pct.round(1) %>%;background:<%= color %>"></div></div>
+            <span class="agq-pct"><%= format("%.2f", pct) %>%</span>
+          </td>
+          <td class="agq-reset" data-reset="<%= m["reset_time"] %>">—</td>
+        </tr>
+      <% end %>
+      </tbody>
+    </table>
+    <script>
+      (function () {
+        function tick() {
+          document.querySelectorAll("td.agq-reset").forEach(function (el) {
+            var iso = el.getAttribute("data-reset");
+            if (!iso) { el.textContent = "—"; return; }
+            var t = new Date(iso).getTime() - Date.now();
+            if (t <= 0) { el.textContent = "已重設 ✓"; el.classList.add("agq-warn"); return; }
+            var s = Math.floor(t / 1000);
+            var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+            el.textContent = h + "h " + m + "m " + sec + "s";
+            if (s < 900) el.classList.add("agq-warn");
+          });
+        }
+        tick();
+        setInterval(tick, 1000);
+      })();
+    </script>
+  <% else %>
+    <p>無資料。</p>
+  <% end %>
+</div>

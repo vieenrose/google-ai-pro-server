@@ -1,4 +1,7 @@
 zh_TW:
+  discourse_gemini:
+    quota:
+      title: "Antigravity 配額"
   admin_js:
     admin:
       site_settings:
