@@ -39,6 +39,10 @@ with get_user_db_session("luigi", password="k1731113") as db:
     snap = get_settings_manager(db).get_all_settings()
 
 snap["search.engine.web.searxng.default_params.instance_url"] = "http://127.0.0.1:8888"
+# LDR defaults to language=en for SearXNG, which poisons Chinese queries with
+# irrelevant results (YouTube/Google-Scholar junk). No language filter works
+# best with this instance (same finding as the bridge chat grounding).
+snap["search.engine.web.searxng.default_params.language"] = "all"
 snap["search.iterations"] = int(os.environ.get("LDR_ITERATIONS", "3"))
 snap["search.max_results"] = int(os.environ.get("LDR_MAX_RESULTS", "15"))
 

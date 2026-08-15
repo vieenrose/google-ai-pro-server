@@ -305,3 +305,13 @@ enforce concurrency limit, honor `/quota` (AI Pro daily quotas).
       (`script -qec ... /dev/null`), open the printed OAuth URL in a browser on the
       AI Pro account, paste the code back; then re-check `loadCodeAssist.currentTier`.
       See session notes 2026-08-15. (No arm64 playwright needed — URL+paste flow works.)
+
+## Host-level fix notes (2026-08-15)
+
+- SearXNG (host :8888): enabled the `duckduckgo`, `duckduckgo web` and
+  `startpage` general engines in /home/luigi/searxng/searx/settings.yml
+  (google stays `inactive` — CAPTCHA-prone). Bing-only general search
+  returned app-store/YouTube junk for niche Chinese queries. The service
+  now runs under systemd (searxng.service).
+- LDR bridge runner: SearXNG `default_params.language` must be "all"
+  (LDR's default "en" poisons Chinese queries; "" is a 400).
