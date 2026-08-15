@@ -21,15 +21,17 @@ import json
 import os
 import urllib.request
 import urllib.parse
+import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "demo"))
 
-from gemini_backends import build_prompt, pick_backend  # noqa: E402
+from gemini_backends import build_prompt, pick_backend, OpenCodeBackend  # noqa: E402
 from deep_research import run_research  # noqa: E402
 
 import re as _re
@@ -47,23 +49,32 @@ IMAGE_GEN_PATTERNS = [
 ]
 
 def looks_like_image_request(messages) -> bool:
-    """True when the last user turn asks to *generate* an image (not analyse one)."""
-    text_parts = []
+    """True when the CURRENT user turn asks to *generate* an image.
+
+    Only the last user message is considered — earlier turns in the topic
+    history must never trigger image routing for a new request.
+    """
     has_image_input = False
-    for m in messages or []:
+    last_text = None
+    for m in reversed(messages or []):
         c = m.get("content")
         if isinstance(c, str):
-            text_parts.append(c)
-        elif isinstance(c, list):
-            for el in c:
+            if c.strip():
+                last_text = c
+            break
+        if isinstance(c, list):
+            for el in reversed(c):
                 if isinstance(el, dict) and el.get("type") in ("image_url", "file"):
                     has_image_input = True
-                if isinstance(el, dict) and el.get("type") == "text":
-                    text_parts.append(str(el.get("text", "")))
+                if isinstance(el, dict) and el.get("type") == "text" and str(el.get("text", "")).strip():
+                    last_text = str(el.get("text", ""))
+                    break
+            break
     if has_image_input:
         return False  # analysing an uploaded image, not generating
-    text = " ".join(text_parts)
-    return any(_re.search(p, text, _re.I) for p in IMAGE_GEN_PATTERNS)
+    if not last_text:
+        return False
+    return any(_re.search(p, last_text, _re.I) for p in IMAGE_GEN_PATTERNS)
 
 
 FORUM_BASE = os.environ.get("FORUM_BASE_URL", "").rstrip("/")
@@ -108,9 +119,21 @@ def upload_to_forum(mime_type: str, b64data: str) -> str:
 
 
 class BridgeHandler(BaseHTTPRequestHandler):
-    server_version = "GeminiBridge/0.2"
+    server_version = "GeminiBridge/0.3"
     backend = None
+    opencode_backend = None
     token = ""
+
+    OPENCODE_PREFIXES = ("deepseek", "mimo", "glm", "grok", "kimi", "minimax", "qwen", "gpt-5.6", "hy3")
+
+    def backend_for(self, model):
+        """Route models that live on the OpenCode Zen Go endpoint."""
+        m = (model or "").lower()
+        if m.startswith(self.OPENCODE_PREFIXES):
+            if BridgeHandler.opencode_backend is None:
+                BridgeHandler.opencode_backend = OpenCodeBackend()
+            return BridgeHandler.opencode_backend
+        return self.backend
 
     # ── helpers ─────────────────────────────────────────────────────────────
     def _send(self, code: int, obj: dict) -> None:
@@ -258,6 +281,96 @@ tick(); setInterval(tick, 1000);
         else:
             self._send(404, {"error": "not found"})
 
+
+
+
+    def _grounded_answer(self, messages, model):
+        """Multi-round tool loop for the main backend: execute googleSearch
+        tool calls with SearXNG and feed the results back (max 3 rounds)."""
+        msgs = list(messages or [])
+        result = None
+        for _ in range(3):
+            result = self.backend.chat_messages(msgs, model=model, tools=None, tool_choice=None)
+            if result.error:
+                return result
+            calls = result.tool_calls or []
+            if not calls:
+                return result
+            for call in calls:
+                fn = call.get("function") or {}
+                name = fn.get("name", "")
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                query = args.get("query") or args.get("q") or ""
+                if name == "googleSearch" and query:
+                    res = searxng.search(query)
+                    content = (
+                        "搜尋結果：\n"
+                        + "\n".join(f"[{i}] {r['title']} — {r['url']}\n    {r['content']}"
+                                     for i, r in enumerate(res, 1))
+                        or "（無結果）"
+                    )
+                else:
+                    content = f"unknown tool: {name}"
+                msgs.append({"role": "assistant", "content": None, "tool_calls": [call]})
+                msgs.append({"role": "tool", "tool_call_id": call.get("id", ""), "content": content})
+        return result
+
+    def _smol_answer_stream(self, messages, model):
+        """Run the smolagents CodeAgent (SearXNG tool) as a subprocess and
+        stream its answer back in chunks. Used for OpenCode Go models."""
+        question = searxng.last_user_query(messages or [])
+        py = os.environ.get("SMOLAGENTS_PY", "/home/luigi/bridge-venv/bin/python")
+        script = Path(__file__).resolve().parent / "smol_agent.py"
+        if not question or not Path(py).exists() or not script.exists():
+            yield "\n\n[agent unavailable — answer from model knowledge]"
+            return
+        try:
+            proc = subprocess.run(
+                [py, str(script), question, "code"],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                env=os.environ.copy(),
+            )
+            out = (proc.stdout or "").strip()
+            out = "\n".join(l for l in out.splitlines() if l.strip() != "Reached max steps.").strip()
+            if proc.returncode != 0 or not out:
+                err = (proc.stderr or "").strip().splitlines()
+                out = "\n\n[agent error: " + (err[-1][:300] if err else "unknown") + "]"
+        except Exception as e:  # noqa: BLE001
+            out = f"\n\n[agent error: {e}]"
+        for i in range(0, len(out), 100):
+            yield out[i : i + 100]
+
+    def _search_query_for(self, messages, model):
+        """Ask the routed model to turn the pending question into search-engine
+        keywords (one cheap round trip), so SearXNG gets keyword-style queries
+        instead of full sentences/questions."""
+        question = searxng.last_user_query(messages or [])
+        if not question or len(question) < 4:
+            return ""
+        try:
+            backend = self.backend_for(model)
+            result = backend.chat_messages(
+                [
+                    {
+                        "role": "user",
+                        "content": (
+                            "把以下問題轉成適合搜尋引擎的關鍵字查詢（5～15字，只輸出關鍵字本身，"
+                            f"不要標點、不要引號、不要問句）：{question}"
+                        ),
+                    }
+                ],
+                model=model,
+            )
+            kw = (result.text or "").strip().strip('"').strip("'").strip()
+            return kw[:40] if kw else ""
+        except Exception:
+            return ""
+
     def _chat(self, body: dict) -> None:
         messages = body.get("messages") or []
         model = body.get("model") or "gemini-3.5-flash"
@@ -266,7 +379,7 @@ tick(); setInterval(tick, 1000);
             return
         prompt = build_prompt(messages)
         t0 = time.time()
-        result = self.backend.chat(prompt, model=model)
+        result = self.backend_for(model).chat(prompt, model=model)
         self._send(200, {
             "reply": result.text,
             "model": result.model or model,
@@ -282,8 +395,14 @@ tick(); setInterval(tick, 1000);
         tools = body.get("tools")
         tool_choice = body.get("tool_choice")
 
-        # image-generation intent on a base chat model -> route to the image model
-        if tools is None and looks_like_image_request(messages) and model != IMAGE_GEN_MODEL:
+        # image-generation intent on a base Gemini chat model -> route to the
+        # image model. Non-Gemini models (opencode etc.) never get rerouted.
+        if (
+            tools is None
+            and looks_like_image_request(messages)
+            and model != IMAGE_GEN_MODEL
+            and (model or "").lower().startswith("gemini-")
+        ):
             sys.stderr.write(f"[bridge] routing image request: {model} -> {IMAGE_GEN_MODEL}\n")
             model = IMAGE_GEN_MODEL
             # append quality guidance to the last user text (preview model needs it)
@@ -305,8 +424,15 @@ tick(); setInterval(tick, 1000);
             self._error(400, "messages required", "invalid_request_error")
             return
 
-        # web search injection for models without native grounding (non-Gemini)
-        messages, web_results = searxng.inject(messages, model)
+        # web grounding:
+        #   - OpenCode Go models  -> smolagents CodeAgent (SearXNG tool)
+        #   - other non-Gemini     -> static SearXNG injection (as before)
+        #   - Gemini models        -> native googleSearch grounding (no-op here)
+        agent_grounded = self.backend_for(model).name == "opencode"
+        web_results = []
+        if not agent_grounded:
+            search_query = self._search_query_for(messages, model)
+            messages, web_results = searxng.inject(messages, model, search_query=search_query)
 
         if body.get("stream"):
             self._stream_completions(
@@ -315,7 +441,13 @@ tick(); setInterval(tick, 1000);
             return
 
         try:
-            result = self.backend.chat_messages(messages, model=model, tools=tools, tool_choice=tool_choice)
+            if self.backend_for(model).name == "opencode":
+                from agent import web_answer
+                result = self.backend_for(model).chat_messages(messages, model=model)
+                if not result.error:
+                    result.text = web_answer(self.backend_for(model), messages, model)
+            else:
+                result = self._grounded_answer(messages, model)
         except Exception as e:  # noqa: BLE001
             self._error(500, str(e), "server_error")
             return
@@ -397,7 +529,21 @@ tick(); setInterval(tick, 1000);
 
         _images = []
         _buf = []  # final-attempt (text|tool) chunks, emitted once (no duplicates)
-        image_requested = (model == IMAGE_GEN_MODEL) or looks_like_image_request(messages)
+        if self.backend_for(model).name == "opencode":
+            try:
+                chunk(role_done=True)
+                for delta in self._smol_answer_stream(messages, model):
+                    chunk(delta_text=delta)
+                chunk(finish="stop")
+            except Exception as e:  # noqa: BLE001
+                try:
+                    chunk(delta_text=f"\n\n[bridge error: {e}]", finish="stop")
+                except Exception:
+                    pass
+            return
+        image_requested = (model == IMAGE_GEN_MODEL) or (
+            (model or "").lower().startswith("gemini-") and looks_like_image_request(messages)
+        )
         attempts = 2 if image_requested else 1
         attempt_exc = None
         try:
@@ -407,7 +553,7 @@ tick(); setInterval(tick, 1000);
                 attempt_imgs = []
                 got_error = False
                 try:
-                    for delta, meta in self.backend.chat_messages_stream(messages, model=model, tools=tools, tool_choice=tool_choice):
+                    for delta, meta in self.backend_for(model).chat_messages_stream(messages, model=model, tools=tools, tool_choice=tool_choice):
                         if delta:
                             if isinstance(delta, str) and "[bridge error:" in delta:
                                 got_error = True

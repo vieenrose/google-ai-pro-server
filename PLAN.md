@@ -296,3 +296,12 @@ enforce concurrency limit, honor `/quota` (AI Pro daily quotas).
 - Community OAuth-token proxies (fallback transport):
   - https://github.com/usamashehab/antigravity-proxy
   - https://github.com/frieser/antigravity-proxy
+
+## PENDING (queued task)
+
+- [ ] **Antigravity CLI re-auth with the Google AI Pro account** (`pesimarketing1995@gmail.com`).
+      The bridge token is classified `free-tier` by Google even though the account
+      holds g1-pro-tier (Google One AI Pro). Steps: run `agy -p hello` under a PTY
+      (`script -qec ... /dev/null`), open the printed OAuth URL in a browser on the
+      AI Pro account, paste the code back; then re-check `loadCodeAssist.currentTier`.
+      See session notes 2026-08-15. (No arm64 playwright needed — URL+paste flow works.)

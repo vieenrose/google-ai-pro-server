@@ -22,7 +22,7 @@ SEARXNG_MAX_RESULTS = int(os.environ.get("SEARXNG_MAX_RESULTS", "5"))
 SEARXNG_TIMEOUT = float(os.environ.get("SEARXNG_TIMEOUT", "8"))
 
 
-def search(query: str, max_results: int | None = None) -> list[dict]:
+def search(query: str, max_results: int | None = None, language: str | None = None) -> list[dict]:
     """Query SearXNG and return [{title, url, content}]. Empty on any failure.
 
     The bridge treats this as best-effort: if the instance is down or slow the
@@ -31,11 +31,14 @@ def search(query: str, max_results: int | None = None) -> list[dict]:
     if not SEARXNG_URL or not query.strip():
         return []
     max_results = max_results or SEARXNG_MAX_RESULTS
-    params = urllib.parse.urlencode(
-        {"q": query.strip()[:200], "format": "json", "language": SEARXNG_LANG}
-    )
+    params = {"q": query.strip()[:200], "format": "json"}
+    if language is None:
+        language = SEARXNG_LANG
+    if language:
+        params["language"] = language
+    query_string = urllib.parse.urlencode(params)
     req = urllib.request.Request(
-        f"{SEARXNG_URL}/search?{params}",
+        f"{SEARXNG_URL}/search?{query_string}",
         headers={"User-Agent": "gemini-bridge/1.0 (Discourse forum)"},
     )
     try:
@@ -55,11 +58,17 @@ def search(query: str, max_results: int | None = None) -> list[dict]:
 
 
 def last_user_query(messages: list[dict]) -> str:
-    """Extract the last user text from an OpenAI-style message list."""
+    """Extract the last user text from an OpenAI-style message list.
+
+    @mentions are stripped — they are routing instructions for the forum bots,
+    not search terms, and they pollute SearXNG results.
+    """
     for message in reversed(messages or []):
         content = message.get("content")
         if isinstance(content, str) and content.strip():
-            return content.strip()
+            c = re.sub(r"@[A-Za-z0-9_\-]+", " ", content)
+            c = re.sub(r"^\s*[\w.@\-]+\s*:\s*", " ", c)  # "author: " prefix
+            return c.strip()
         if isinstance(content, list):
             texts = [
                 el.get("text", "")
@@ -67,11 +76,13 @@ def last_user_query(messages: list[dict]) -> str:
                 if isinstance(el, dict) and el.get("type") == "text"
             ]
             if texts and texts[-1].strip():
-                return texts[-1].strip()
+                c = re.sub(r"@[A-Za-z0-9_\-]+", " ", texts[-1])
+                c = re.sub(r"^\s*[\w.@\-]+\s*:\s*", " ", c)
+                return c.strip()
     return ""
 
 
-def inject(messages: list[dict], model: str) -> tuple[list[dict], list[dict]]:
+def inject(messages: list[dict], model: str, search_query: str = "") -> tuple[list[dict], list[dict]]:
     """Insert SearXNG results before the last user message when the model has
     no native grounding (anything that is not a Gemini model).
 
@@ -86,7 +97,32 @@ def inject(messages: list[dict], model: str) -> tuple[list[dict], list[dict]]:
     query = last_user_query(messages)
     if len(query) < 4:
         return messages, []
-    results = search(query)
+    # Prefer a model-generated keyword query when provided; otherwise clean
+    # the raw question (strip instruction phrasing).
+    cleaned = (search_query or "").strip().strip('"').strip("'").strip()
+    if len(cleaned) < 4:
+        cleaned = re.sub(
+            r"(請搜尋|請|列出|簡短|就好|就好$|三則|則$|。|！|？|,|，|、|\s)",
+            " ",
+            query,
+        )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) < 4:
+        cleaned = query
+    is_news = ("新聞" in query or "news" in query.lower())
+    # Unfiltered global search leads: the zh-TW language filter tends to
+    # return dictionary/calendar noise; good Taiwanese sources (BBC, TVBS,
+    # Taipei Times, Google News) surface better without it.
+    results = search(cleaned, language="")
+    for r in search(cleaned) or []:  # zh-TW-filtered variant as fallback
+        if r["url"] not in {x["url"] for x in results}:
+            results.append(r)
+    if is_news:
+        extra = cleaned if "新聞" in cleaned else cleaned + " 新聞"
+        for r in search(extra, language="") or []:
+            if r["url"] not in {x["url"] for x in results}:
+                results.insert(0, r)
+    results = results[:SEARXNG_MAX_RESULTS]
     if not results:
         return messages, []
 

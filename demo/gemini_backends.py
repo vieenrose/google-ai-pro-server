@@ -1508,3 +1508,101 @@ def pick_backend(prefer: str | None = None) -> object:
         if b.available():
             return b
     return MockBackend()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backend 6: OpenCode.ai Zen Go (OpenAI-compatible, e.g. deepseek-v4-flash)
+# ─────────────────────────────────────────────────────────────────────────────
+OPENCODE_BASE_URL = os.environ.get("OPENCODE_BASE_URL", "https://opencode.ai/zen/go/v1")
+OPENCODE_API_KEY = os.environ.get("OPENCODE_API_KEY", "")
+
+
+class OpenCodeBackend:
+    """OpenAI-compatible endpoint at opencode.ai/zen/go (deepseek-v4-* etc.).
+
+    No native grounding — the bridge injects SearXNG results for these models
+    (searxng.inject is already applied for any non-Gemini model).
+    """
+
+    name = "opencode"
+
+    def __init__(self, base_url: str | None = None, api_key: str | None = None):
+        self.base_url = (base_url or OPENCODE_BASE_URL).rstrip("/")
+        self.api_key = api_key or OPENCODE_API_KEY
+
+    def available(self) -> bool:
+        return bool(self.base_url and self.api_key)
+
+    def describe(self) -> str:
+        return f"OpenCodeBackend ({self.base_url}) — OpenAI-compatible, SearXNG-grounded"
+
+    UA = "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
+
+    def _post(self, path: str, body: dict, timeout: int = 180) -> dict:
+        req = urllib.request.Request(
+            f"{self.base_url}{path}",
+            data=json.dumps(body).encode(),
+            method="POST",
+        )
+        req.add_header("Content-Type", "application/json")
+        req.add_header("User-Agent", self.UA)
+        if self.api_key:
+            req.add_header("Authorization", f"Bearer {self.api_key}")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode(errors="replace"))
+
+    def chat(self, prompt: str, model: str = "deepseek-v4-flash", stream: bool = False) -> ChatResult:
+        result = self.chat_messages([{"role": "user", "content": prompt}], model=model)
+        return result
+
+    def chat_messages(self, messages, model: str = "deepseek-v4-flash", stream: bool = False,
+                      tools=None, tool_choice=None) -> ChatResult:
+        body: dict = {"model": model, "messages": messages, "stream": False}
+        try:
+            data = self._post("/chat/completions", body)
+        except Exception as e:  # noqa: BLE001
+            return ChatResult(text="", error=str(e))
+        choice = (data.get("choices") or [{}])[0]
+        message = choice.get("message") or {}
+        return ChatResult(
+            text=message.get("content") or "",
+            model=model,
+            usage=data.get("usage") or {},
+            finish_reason=choice.get("finish_reason") or "stop",
+        )
+
+    def chat_stream(self, prompt: str, model: str = "deepseek-v4-flash"):
+        yield from self.chat_messages_stream([{"role": "user", "content": prompt}], model=model)
+
+    def chat_messages_stream(self, messages, model: str = "deepseek-v4-flash", tools=None, tool_choice=None):
+        body: dict = {"model": model, "messages": messages, "stream": True}
+        req = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(body).encode(),
+            method="POST",
+        )
+        req.add_header("Content-Type", "application/json")
+        req.add_header("User-Agent", self.UA)
+        if self.api_key:
+            req.add_header("Authorization", f"Bearer {self.api_key}")
+        try:
+            resp = urllib.request.urlopen(req, timeout=180)
+        except Exception as e:  # noqa: BLE001
+            yield f"\n\n[bridge error: {e}]", None
+            return
+        for raw_line in resp:
+            line = raw_line.decode(errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            try:
+                ev = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            for choice in ev.get("choices") or []:
+                delta = choice.get("delta") or {}
+                text = delta.get("content")
+                if text:
+                    yield text, None
