@@ -64,3 +64,17 @@ module `DiscourseGemini`, job names, the `discourse-gemini-bot-post` CSS
 class) so existing forum data, stored settings, and already-posted reports
 survive the rename untouched. Deploy by replacing the old plugin directory
 with this one; no database migration is needed.
+
+## One-plugin mode (chat bots + image generation + quota)
+
+The plugin can fully replace discourse-ai's chat bots:
+
+1. Set `gemini_bot_models` (JSON map username → model), e.g.
+   `{"ai_gemini_image": "gemini-3.1-flash-image", "ai_gemini_3_6_flash": "gemini-3.6-flash"}`.
+   The plugin creates the bot users on boot if they don't exist.
+2. Mention a bot in a post → the plugin streams the bridge's
+   `/v1/chat/completions` into a reply. Image requests are detected by the
+   bridge, which switches to the image model and uploads the result.
+3. Admin → Plugins → Gemini → "Antigravity 配額" shows the per-model quota
+   monitor (bridge `/api/quota`, also served at `http://<host>:8787/quota`).
+4. Disable the equivalent discourse-ai agents to avoid double replies.

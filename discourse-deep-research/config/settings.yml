@@ -40,3 +40,19 @@ discourse_gemini:
     default: 3
     type: integer
     description: "Sub-questions the research explores."
+
+  # ── built-in AI chat bots (one-plugin mode) ───────────────────────────────
+  gemini_chat_enabled:
+    default: true
+    client: true
+    description: "Enable the built-in chat bots (mention a configured bot to get a reply)."
+
+  gemini_bot_models:
+    default: "{}"
+    type: json
+    description: "JSON map of bot username → model, e.g. {\"ai_gemini_image\": \"gemini-3.1-flash-image\", \"ai_gemini_3_6_flash\": \"gemini-3.6-flash\"}. The plugin creates these bot users on boot and replies when they are mentioned."
+
+  gemini_chat_history_posts:
+    default: 10
+    type: integer
+    description: "Number of recent topic posts included as context for chat bot replies."

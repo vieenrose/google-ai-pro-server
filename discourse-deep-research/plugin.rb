@@ -84,6 +84,76 @@ after_initialize do
       PluginStore.set("discourse_gemini", key, used + count)
     end
 
+
+    # ── built-in chat bots (one-plugin mode) ───────────────────────────────
+    def self.bot_config
+      raw = SiteSetting.gemini_bot_models.presence || "{}"
+      JSON.parse(raw)
+    rescue JSON::ParserError
+      {}
+    end
+
+    def self.bot_model(username)
+      bot_config[username].presence
+    end
+
+    def self.chat_bot?(user)
+      return false if user.blank?
+      bot_config.key?(user.username)
+    end
+
+    def self.ensure_chat_bots!
+      bot_config.each_key do |username|
+        next if User.find_by(username: username).present?
+        begin
+          User.transaction do
+            user =
+              User.create!(
+                username: username,
+                name: username.titleize,
+                email: "#{username}@discourse-gemini.invalid",
+                active: true,
+                approved: true,
+                trust_level: TrustLevel.levels[:leader],
+              )
+            user.activate
+          end
+        rescue ActiveRecord::RecordInvalid, PG::UniqueViolation
+          # raced with another boot — fine
+        end
+      end
+    end
+
+    # Build OpenAI-style message history for a chat bot reply.
+    def self.build_chat_messages(post, bot)
+      limit = SiteSetting.gemini_chat_history_posts.to_i.clamp(1, 30)
+      topic_posts =
+        post
+          .topic
+          .posts
+          .where("post_number <= ?", post.post_number)
+          .where.not(post_type: Post.types[:small_action])
+          .order("post_number DESC")
+          .limit(limit)
+          .to_a
+          .reverse
+      messages = []
+      topic_posts.each do |p|
+        role = p.user_id == bot.id || (p.user_id.to_i < 0 && chat_bot_username?(p.user)) ? "assistant" : "user"
+        content = p.cooked.present? ? PrettyText.excerpt(p.cooked, 3000, strip_links: true) : p.raw.to_s[0, 3000]
+        content = content.to_s.gsub(/<[^>]+>/, " ")
+        author = p.user&.username || "user"
+        prefix = role == "user" ? "#{author}: " : ""
+        messages << { role: role, content: "#{prefix}#{content}" }
+      end
+      # keep the last message as the triggering user turn
+      messages
+    end
+
+    def self.chat_bot_username?(user)
+      user.respond_to?(:username) && bot_config.key?(user.username)
+    end
+
     def self.post_as_bot(topic_id:, raw:, title: nil, username: "deep-research", reply_to_post_number: nil)
       bot = User.find_by(username: username) || Discourse.system_user
       cooked = "<div class=\"discourse-gemini-bot-post\">\n\n#{raw}\n\n</div>"
@@ -141,6 +211,7 @@ after_initialize do
   end
 
   ::DiscourseGemini.ensure_deep_research_bot!
+  ::DiscourseGemini.ensure_chat_bots!
 
   # ── chat rendering fix ───────────────────────────────────────────────────
   # Chat's markdown does not render <details> HTML, so the folded ai-thinking
@@ -177,7 +248,7 @@ after_initialize do
     end
   end
 
-  # ── trigger: detect @deep-research / /deep in new posts ───────────────────
+
   on(:post_created) do |post, _opts, user|
     next unless SiteSetting.gemini_enabled
     next if user.blank? || deep_research_bot?(user)
@@ -187,6 +258,26 @@ after_initialize do
       DiscourseGemini.run_job(user, post, { topic: $1.strip })
     elsif raw =~ /\A\/deep\s+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
       DiscourseGemini.run_job(user, post, { topic: $1.strip })
+    end
+
+    # built-in chat bots: mention-triggered replies
+    next unless SiteSetting.gemini_chat_enabled
+    next if post.custom_fields["gemini_chat_reply_enqueued"].present?
+
+    mentioned = raw.scan(/@([a-zA-Z0-9_\-]+)/).flatten.uniq
+    mentioned.each do |username|
+      model = DiscourseGemini.bot_model(username)
+      next if model.blank?
+      next unless DiscourseGemini.allowed_for?(user)
+      if DiscourseGemini.remaining_uses(user) < 1
+        Jobs.enqueue(:gemini_notice, post_id: post.id, text: I18n.t("discourse_gemini.rate_limited"))
+        next
+      end
+      DiscourseGemini.record_use(user, 1)
+      post.custom_fields["gemini_chat_reply_enqueued"] = true
+      post.save_custom_fields
+      Jobs.enqueue(:gemini_chat_reply, post_id: post.id, bot_username: username)
+      break
     end
   end
 end

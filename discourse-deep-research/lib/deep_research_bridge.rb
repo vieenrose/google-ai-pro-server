@@ -40,6 +40,44 @@ class GeminiBridge
     get("/api/quota")
   end
 
+  # POST /v1/chat/completions (OpenAI-compatible, SSE stream). Yields each
+  # assistant text delta. Returns the full accumulated content.
+  def stream_chat_completions(messages, model:)
+    buffer = +""
+    uri = URI.join("#{@url}/", "/v1/chat/completions")
+    req = Net::HTTP::Post.new(uri.path)
+    req["Content-Type"] = "application/json"
+    req["Authorization"] = "Bearer #{@token}" unless @token.empty?
+    req.body = JSON.dump({ messages: messages, model: model, stream: true })
+
+    Net::HTTP.start(uri.host, uri.port, read_timeout: 600, open_timeout: 10) do |http|
+      http.request(req) do |resp|
+        unless resp.is_a?(Net::HTTPSuccess)
+          raise Error, "bridge HTTP #{resp.code}: #{resp.body.to_s[0, 300]}"
+        end
+        resp.read_body do |chunk|
+          chunk.split("\n").each do |line|
+            next unless line.start_with?("data: ")
+            data = line.delete_prefix("data: ").strip
+            next if data == "[DONE]"
+            begin
+              parsed = JSON.parse(data)
+            rescue JSON::ParserError
+              next
+            end
+            (parsed.dig("choices") || []).each do |choice|
+              delta = choice.dig("delta", "content")
+              next if delta.blank?
+              buffer << delta
+              yield delta
+            end
+          end
+        end
+      end
+    end
+    buffer
+  end
+
   private
 
   def get(path)

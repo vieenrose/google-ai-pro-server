@@ -6,5 +6,7 @@ zh_TW:
     deep_started: "🧪 Deep Research 已開始——這需要幾分鐘。完成後 Gemini 會在此張貼報告。"
     deep_report_title: "Gemini Deep Research：%{topic}"
     chat_prefix: "🤖 **Gemini**"
+    chat_thinking: "🤖 思考中…"
+    chat_empty: "⚠️ 模型沒有回覆內容。"
     quota:
       title: "Antigravity 配額"
