@@ -4,11 +4,15 @@ module ::Jobs
   # Runs the SELF-HOSTED Local Deep Research pipeline (local_deep_research
   # package, SearXNG + deepseek-v4-flash) and posts the cited report.
   class GeminiLocalDeepResearch < ::Jobs::Base
-    sidekiq_options retry: 1, queue: "low"
+    sidekiq_options retry: 0, queue: "low"
 
     def execute(args)
       post = Post.find_by(id: args[:post_id])
       return if post.blank?
+
+      # Deduplicate: one report per triggering post (sidekiq retries and
+      # duplicate mentions must not spawn multiple LDR runs).
+      return if post.custom_fields["ldr_report_posted"].present?
 
       DiscourseGemini.post_as_bot(
         topic_id: post.topic_id,
@@ -44,12 +48,17 @@ module ::Jobs
         MD
       end
 
-      DiscourseGemini.post_as_bot(
-        topic_id: post.topic_id,
-        reply_to_post_number: post.reply_to_post_number,
-        raw: raw,
-        username: "local-deep-research",
-      )
+      bot_post =
+        DiscourseGemini.post_as_bot(
+          topic_id: post.topic_id,
+          reply_to_post_number: post.reply_to_post_number,
+          raw: raw,
+          username: "local-deep-research",
+        )
+      if bot_post.present?
+        post.custom_fields["ldr_report_posted"] = true
+        post.save_custom_fields
+      end
     end
   end
 end
