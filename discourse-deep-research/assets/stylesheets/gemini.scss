@@ -15,3 +15,20 @@
 .discourse-gemini-bot-post blockquote {
   margin-inline: 0;
 }
+
+// Antigravity quota header link (home-logo connector)
+.agq-nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  margin-right: 8px;
+  border: 1px solid var(--primary-low, #ddd);
+  border-radius: 999px;
+  font-size: var(--font-down-1);
+  color: var(--primary, #222);
+  white-space: nowrap;
+  &:hover {
+    background: var(--primary-very-low, #f5f5f5);
+  }
+}
