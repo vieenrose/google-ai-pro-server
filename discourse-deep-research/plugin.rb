@@ -172,6 +172,19 @@ after_initialize do
       ).create!
     end
 
+    def self.run_local_job(user, post, payload)
+      if !allowed_for?(user)
+        Jobs.enqueue(:gemini_notice, post_id: post.id, text: I18n.t("discourse_gemini.not_allowed"))
+        return
+      end
+      if remaining_uses(user) < 1
+        Jobs.enqueue(:gemini_notice, post_id: post.id, text: I18n.t("discourse_gemini.rate_limited"))
+        return
+      end
+      record_use(user, 1)
+      Jobs.enqueue(:gemini_local_deep_research, payload.merge(post_id: post.id))
+    end
+
     def self.run_job(user, post, payload)
       if !allowed_for?(user)
         Jobs.enqueue(:gemini_notice, post_id: post.id,
@@ -185,6 +198,30 @@ after_initialize do
       end
       record_use(user, 1)
       Jobs.enqueue(:gemini_deep_research, payload.merge(post_id: post.id))
+    end
+
+    def self.ensure_local_deep_research_bot!
+      username = "local-deep-research"
+      user = User.find_by(username: username)
+      return user if user
+      begin
+        User.transaction do
+          user = User.create!(
+            username: username,
+            name: "Local Deep Research",
+            email: "#{username}@discourse-gemini.invalid",
+            active: true,
+            approved: true,
+            trust_level: TrustLevel.levels[:leader],
+          )
+          user.activate
+        end
+        user.custom_fields[BOT_FIELD] = true
+        user.save_custom_fields
+      rescue ActiveRecord::RecordInvalid, PG::UniqueViolation
+        user = User.find_by(username: username)
+      end
+      user
     end
 
     def self.ensure_deep_research_bot!
@@ -216,6 +253,7 @@ after_initialize do
   end
 
   ::DiscourseGemini.ensure_deep_research_bot!
+  ::DiscourseGemini.ensure_local_deep_research_bot!
   ::DiscourseGemini.ensure_chat_bots!
 
   # ── chat rendering fix ───────────────────────────────────────────────────
@@ -248,7 +286,11 @@ after_initialize do
     next if user.blank? || deep_research_bot?(user)
     raw = post.raw.to_s
 
-    if raw =~ /\A@deep-research[:\s]+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
+    if raw =~ /\A@local-deep-research[:\s]+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
+      DiscourseGemini.run_local_job(user, post, { topic: $1.strip })
+    elsif raw =~ /\A\/ldr\s+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
+      DiscourseGemini.run_local_job(user, post, { topic: $1.strip })
+    elsif raw =~ /\A@deep-research[:\s]+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
       DiscourseGemini.run_job(user, post, { topic: $1.strip })
     elsif raw =~ /\A\/deep\s+(.+)\z/m && SiteSetting.gemini_deep_research_enabled
       DiscourseGemini.run_job(user, post, { topic: $1.strip })

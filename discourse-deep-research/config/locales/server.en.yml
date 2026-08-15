@@ -6,6 +6,7 @@ en:
     deep_started: "🧪 Deep Research started — this takes a few minutes. Gemini will post the report here when it's done."
     deep_report_title: "Gemini Deep Research: %{topic}"
     chat_prefix: "🤖 **Gemini**"
+    local_deep_started: "🔬 Self-hosted Local Deep Research started — this takes a few minutes. The report will be posted here when it's done."
     chat_thinking: "🤖 Thinking…"
     chat_empty: "⚠️ The model returned an empty reply."
     quota:

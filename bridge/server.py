@@ -274,6 +274,8 @@ tick(); setInterval(tick, 1000);
 
         if self.path == "/v1/chat/completions":
             self._chat_completions(body)
+        elif self.path == "/v1/local-deep-research":
+            self._local_deep_research(body)
         elif self.path == "/v1/chat":
             self._chat(body)
         elif self.path == "/v1/deep-research":
@@ -603,6 +605,38 @@ tick(); setInterval(tick, 1000);
             self.wfile.flush()
         except Exception:
             pass
+
+
+    def _local_deep_research(self, body: dict) -> None:
+        topic = (body.get("topic") or "").strip()
+        if not topic:
+            self._send(400, {"error": "topic required"})
+            return
+        py = os.environ.get("LDR_PY", "/home/luigi/conda-envs/dr-ldr/bin/python")
+        script = str(Path(__file__).resolve().parent / "ldr_runner.py")
+        t0 = time.time()
+        try:
+            proc = subprocess.run(
+                [py, script, topic],
+                capture_output=True,
+                text=True,
+                timeout=int(os.environ.get("LDR_TIMEOUT", "1200")),
+                env=os.environ.copy(),
+            )
+            out = (proc.stdout or "").strip()
+            if proc.returncode != 0 or not out:
+                err = ((proc.stderr or "").strip().splitlines() or ["unknown error"])[-1]
+                self._send(502, {"error": f"LDR failed: {err[:400]}"})
+                return
+            try:
+                data = json.loads(out)
+            except json.JSONDecodeError:
+                self._send(502, {"error": f"LDR non-JSON output: {out[:200]}"})
+                return
+            data["duration_seconds"] = round(time.time() - t0, 1)
+            self._send(200, data)
+        except Exception as e:  # noqa: BLE001
+            self._send(502, {"error": str(e)[:400]})
 
     def _deep_research(self, body: dict) -> None:
         topic = body.get("topic") or ""

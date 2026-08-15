@@ -40,6 +40,12 @@ class GeminiBridge
     get("/api/quota")
   end
 
+  # POST /v1/local-deep-research → { report:, sources:, duration_seconds: }
+  # Self-hosted Local Deep Research (2–10 minutes) — long read timeout.
+  def local_deep_research(topic)
+    post("/v1/local-deep-research", { topic: topic }, read_timeout: 1200)
+  end
+
   # POST /v1/chat/completions (OpenAI-compatible, SSE stream). Yields each
   # assistant text delta. Returns the full accumulated content.
   def stream_chat_completions(messages, model:)
@@ -85,17 +91,17 @@ class GeminiBridge
     request(req)
   end
 
-  def post(path, payload)
+  def post(path, payload, read_timeout: 600)
     req = Net::HTTP::Post.new(path)
     req["Content-Type"] = "application/json"
     req.body = JSON.dump(payload)
-    request(req)
+    request(req, read_timeout: read_timeout)
   end
 
-  def request(req)
+  def request(req, read_timeout: 600)
     uri = URI.join("#{@url}/", req.path)
     req["Authorization"] = "Bearer #{@token}" unless @token.empty?
-    res = Net::HTTP.start(uri.host, uri.port, read_timeout: 600, open_timeout: 10) do |http|
+    res = Net::HTTP.start(uri.host, uri.port, read_timeout: read_timeout, open_timeout: 10) do |http|
       http.request(req)
     end
     body = JSON.parse(res.body) rescue {}
