@@ -315,3 +315,16 @@ enforce concurrency limit, honor `/quota` (AI Pro daily quotas).
   now runs under systemd (searxng.service).
 - LDR bridge runner: SearXNG `default_params.language` must be "all"
   (LDR's default "en" poisons Chinese queries; "" is a 400).
+
+## LDR host fixes (2026-08-16)
+
+- **journal_quality.db thread-safety**: the read-only StaticPool connection
+  is shared across parallel search workers → sqlite3 InterfaceError / IndexError
+  on every concurrent journal filter. Fixed via sitecustomize.py in the dr-ldr
+  env (wraps lookup methods with the class RLock). Delete
+  ~/conda-envs/dr-ldr/lib/python3.13/site-packages/sitecustomize.py to revert.
+- **LLM relevance filter disabled** for arxiv/openalex/semantic_scholar/
+  wikipedia/wikinews/pubmed (deepseek-v4-flash's reasoning output never parsed
+  → "kept 0 of 40" every batch; CrossEngineFilter still ranks at strategy level).
+- Forum runs: source_based strategy + 4 iterations (~1h cap) — see
+  bridge/ldr_runner.py env knobs.
