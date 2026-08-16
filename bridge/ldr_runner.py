@@ -27,7 +27,7 @@ if not topic.strip():
 BASE_URL = os.environ.get("LDR_BASE_URL", "http://127.0.0.1:5000")
 USERNAME = os.environ.get("LDR_USERNAME", "luigi")
 PASSWORD = os.environ.get("LDR_PASSWORD", "k1731113")
-TIMEOUT = int(os.environ.get("LDR_TIMEOUT", "7200"))
+TIMEOUT = int(os.environ.get("LDR_TIMEOUT", "1800"))
 
 client = LDRClient(base_url=BASE_URL)
 t0 = time.time()
