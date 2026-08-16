@@ -43,7 +43,7 @@ class GeminiBridge
   # POST /v1/local-deep-research → { report:, sources:, duration_seconds: }
   # Self-hosted Local Deep Research (2–10 minutes) — long read timeout.
   def local_deep_research(topic)
-    post("/v1/local-deep-research", { topic: topic }, read_timeout: 7200)
+    post("/v1/local-deep-research", { topic: topic }, read_timeout: 14400)
   end
 
   # POST /v1/chat/completions (OpenAI-compatible, SSE stream). Yields each
