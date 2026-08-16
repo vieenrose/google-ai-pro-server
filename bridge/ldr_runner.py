@@ -40,7 +40,14 @@ if not client.login(USERNAME, PASSWORD):
 # the server uses the user's saved settings (strategy, iterations, LLM).
 response = client.session.post(
     f"{BASE_URL}/research/api/start",
-    json={"query": topic, "search_engines": ["searxng"], "mode": "full"},
+    json={
+        "query": topic,
+        "search_engines": ["searxng"],
+        "mode": "full",
+        # Force the cheap/fast model for forum runs; the user's saved UI
+        # default is deepseek-v4-pro (more expensive).
+        "model": os.environ.get("LDR_MODEL", "deepseek-v4-flash"),
+    },
     headers=client._api_headers(),
 )
 if response.status_code != 200:
