@@ -620,7 +620,7 @@ tick(); setInterval(tick, 1000);
                 [py, script, topic],
                 capture_output=True,
                 text=True,
-                timeout=int(os.environ.get("LDR_TIMEOUT", "14400")),
+                timeout=int(os.environ.get("LDR_TIMEOUT", "28800")),
                 env=os.environ.copy(),
             )
             out = (proc.stdout or "").strip()
