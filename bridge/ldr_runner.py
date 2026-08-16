@@ -61,13 +61,38 @@ except Exception as e:  # noqa: BLE001
     print(json.dumps({"error": str(e)[:500]}), flush=True)
     sys.exit(1)
 
-report_parts = []
-summary = result.get("summary") or ""
-findings = result.get("findings") or ""
-if isinstance(findings, dict):
-    findings = findings.get("summary") or findings.get("report") or ""
-report = f"{summary}\n\n{findings}".strip()
-sources = result.get("sources") or []
+# Prefer the saved report from the user DB (the HTTP report endpoint can be
+# slow right after a run completes). Sources come from research_resources.
+from local_deep_research.database.session_context import get_user_db_session  # noqa: E402
+from local_deep_research.database.models import ResearchHistory, ResearchResource  # noqa: E402
+
+report = ""
+sources = []
+try:
+    with get_user_db_session(USERNAME, password=PASSWORD) as db:
+        row = db.query(ResearchHistory).filter_by(id=research_id).first()
+        if row and row.report_content:
+            report = row.report_content
+        for r in db.query(ResearchResource).filter_by(research_id=research_id).limit(30).all():
+            if r.url:
+                sources.append(
+                    {
+                        "title": r.title or r.url,
+                        "url": r.url,
+                        "snippet": (r.content_preview or "")[:200],
+                    }
+                )
+except Exception as e:  # noqa: BLE001
+    pass
+
+if not report:
+    summary = result.get("summary") or ""
+    findings = result.get("findings") or ""
+    if isinstance(findings, dict):
+        findings = findings.get("summary") or findings.get("report") or ""
+    report = f"{summary}\n\n{findings}".strip()
+if not sources:
+    sources = result.get("sources") or []
 
 print(
     json.dumps(
