@@ -44,9 +44,16 @@ response = client.session.post(
         "query": topic,
         "search_engines": ["searxng"],
         "mode": "full",
-        # Force the cheap/fast model for forum runs; the user's saved UI
-        # default is deepseek-v4-pro (more expensive).
+        # Forum-run tuning (env-overridable): keep the official pipeline but
+        # bound it so runs finish in ~1h instead of 6h+:
+        #   - source_based: finite strategy — langgraph-agent's recursion was
+        #     the runaway (8k+ sources, repeated recursion-limit synthesis)
+        #   - moderate iterations / questions / result cap
         "model": os.environ.get("LDR_MODEL", "deepseek-v4-flash"),
+        "strategy": os.environ.get("LDR_STRATEGY", "source_based"),
+        "iterations": int(os.environ.get("LDR_ITERATIONS", "4")),
+        "max_results": int(os.environ.get("LDR_MAX_RESULTS", "20")),
+        "questions_per_iteration": int(os.environ.get("LDR_QPI", "3")),
     },
     headers=client._api_headers(),
 )
