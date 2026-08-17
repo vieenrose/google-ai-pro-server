@@ -1,4 +1,5 @@
-# Plugin settings for discourse-deep-research (keys kept from discourse-gemini for migration continuity)
+# Plugin settings for Sloth AI (Google AI Pro / Antigravity bridge).
+# Keys kept from discourse-gemini for migration continuity.
 
 discourse_gemini:
   gemini_enabled:
@@ -7,62 +8,13 @@ discourse_gemini:
 
   gemini_bridge_url:
     default: "http://127.0.0.1:8787"
-    description: "Base URL of the local Gemini bridge (bridge/server.py)."
+    description: "Base URL of the local Sloth AI bridge (bridge/server.py)."
 
   gemini_bridge_token:
     default: ""
     secret: true
     description: "Bearer token the bridge expects (BRIDGE_TOKEN). Leave empty if the bridge runs without auth."
 
-  gemini_opencode_api_key:
-    default: ""
-    secret: true
-    description: "API key for OpenCode Go (deepseek-v4-flash / mimo-v2.5). When set here it overrides the bridge's OPENCODE_API_KEY env var. The admin can rotate it at any time — the plugin pushes it to the bridge via POST /v1/config/opencode-key."
-
-  gemini_together_api_key:
-    default: ""
-    secret: true
-    description: "API key for Together AI (e.g. Prism-ML/Ternary-Bonsai-27B). Pushed to the bridge via POST /v1/config/together-key when changed."
-
-  gemini_allowed_groups:
-    default: "trust_level_1|trust_level_2|trust_level_3|trust_level_4"
-    type: group_list
-    description: "Groups allowed to summon Gemini (pipe-separated)."
-
-  gemini_bot_username:
-    default: "gemini"
-    description: "Username of the bot that posts Gemini's replies."
-
   gemini_model:
-    default: "gemini-3.5-flash"
-    description: "Default model for chat replies."
-
-  gemini_daily_limit_per_user:
-    default: 20
-    type: integer
-    description: "Per-user daily call cap (chat + deep share it)."
-
-  gemini_deep_research_enabled:
-    default: true
-    client: true
-
-  gemini_deep_research_max_questions:
-    default: 3
-    type: integer
-    description: "Sub-questions the research explores."
-
-  # ── built-in AI chat bots (one-plugin mode) ───────────────────────────────
-  gemini_chat_enabled:
-    default: true
-    client: true
-    description: "Enable the built-in chat bots (mention a configured bot to get a reply)."
-
-  gemini_bot_models:
-    default: "{}"
-    type: json
-    description: "JSON map of bot username → model, e.g. {\"ai_gemini_image\": \"gemini-3.1-flash-image\", \"ai_gemini_3_6_flash\": \"gemini-3.6-flash\"}. The plugin creates these bot users on boot and replies when they are mentioned."
-
-  gemini_chat_history_posts:
-    default: 10
-    type: integer
-    description: "Number of recent topic posts included as context for chat bot replies."
+    default: "gemini-3.7-flash-tiered"
+    description: "Default Google AI Pro model used by the bridge."
