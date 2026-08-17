@@ -25,7 +25,7 @@
   <% elsif @quota && @quota["models"].present? %>
     <div class="agq-sub">
       資料擷取於 <%= Time.at(@quota["fetched_at"]).in_time_zone.strftime("%Y-%m-%d %H:%M:%S") %>（本機時間）·
-      來源 fetchAvailableModels/quotaInfo ·
+      來源 fetchAvailableModels/quotaInfo + OpenCode /usage ·
       <a href="/admin/plugins/antigravity-quota" data-auto-route-alt="">重新整理</a>
     </div>
     <table>
@@ -66,7 +66,47 @@
         setInterval(tick, 1000);
       })();
     </script>
-  <% else %>
-    <p>無資料。</p>
+  <% end %>
+
+  <% if @quota && @quota["opencode"] && @quota["opencode"]["models"].present? %>
+    <h2 style="margin-top:28px;font-size:16px;">🚀 OpenCode Go（deepseek-v4-pro / flash 等）</h2>
+    <table>
+      <thead><tr><th>方案時間窗</th><th>剩餘額度</th><th>重設倒數</th></tr></thead>
+      <tbody>
+      <% @quota["opencode"]["models"].each do |m| %>
+        <% frac = m["remaining"].to_f; pct = frac * 100.0
+           color = frac > 0.5 ? "#16a34a" : (frac > 0.1 ? "#ca8a04" : "#dc2626") %>
+        <tr>
+          <td>
+            <%= m["name"] %>
+            <div class="agq-key"><%= m["key"] %></div>
+          </td>
+          <td>
+            <div class="agq-bar"><div class="agq-fill" style="width:<%= pct.round(1) %>%;background:<%= color %>"></div></div>
+            <span class="agq-pct"><%= format("%.2f", pct) %>%</span>
+          </td>
+          <td class="agq-reset" data-reset="<%= m["reset_time"] %>">—</td>
+        </tr>
+      <% end %>
+      </tbody>
+    </table>
+    <script>
+      (function () {
+        function tick() {
+          document.querySelectorAll("td.agq-reset").forEach(function (el) {
+            var iso = el.getAttribute("data-reset");
+            if (!iso) { el.textContent = "—"; return; }
+            var t = new Date(iso).getTime() - Date.now();
+            if (t <= 0) { el.textContent = "已重設 ✓"; el.classList.add("agq-warn"); return; }
+            var s = Math.floor(t / 1000);
+            var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+            el.textContent = h + "h " + m + "m " + sec + "s";
+            if (s < 900) el.classList.add("agq-warn");
+          });
+        }
+        tick();
+        setInterval(tick, 1000);
+      })();
+    </script>
   <% end %>
 </div>

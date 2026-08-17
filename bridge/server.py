@@ -173,11 +173,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/quota":
             try:
                 gem = self.backend.quota()
-                oc = None
                 if BridgeHandler.opencode_backend is None:
                     BridgeHandler.opencode_backend = OpenCodeBackend()
                 oc = BridgeHandler.opencode_backend.quota()
-                self._send(200, {"antigravity": gem, "opencode": oc})
+                merged = dict(gem)  # keep top-level models + fetched_at (Discourse plugin reads @quota["models"])
+                merged["opencode"] = oc
+                self._send(200, merged)
             except Exception as e:  # noqa: BLE001
                 self._send(502, {"error": str(e)})
         elif self.path == "/quota" or self.path.startswith("/quota?"):
