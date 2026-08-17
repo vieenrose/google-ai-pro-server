@@ -39,7 +39,7 @@
   <% if current_user&.admin? %>
     <div class="agq-box">
       <h3>⚙️ 設定 / Settings</h3>
-      <%= form_tag "/admin/plugins/antigravity-quota/settings", method: :post do %>
+      <%= form_tag "/admin/plugins/sloth-ai/settings", method: :post do %>
         <label for="opencode_api_key">OpenCode Go API Key（deepseek / mimo）</label>
         <% oc = @settings.find { |s| s[:setting].to_s == "gemini_opencode_api_key" }
            oc_set = oc && oc[:value].present? %>
@@ -57,7 +57,29 @@
         <input type="text" id="bridge_url" name="bridge_url" value=""
                placeholder="<%= (@settings.find { |s| s[:setting].to_s == "gemini_bridge_url" }&.dig(:value) || "http://127.0.0.1:8787") %>">
 
-        <button class="btn btn-primary" type="submit">儲存設定</button>
+        <div style="margin-top:18px;border-top:1px solid var(--primary-low, #ddd);padding-top:12px;">
+          <label for="model">預設模型（chat / deep research）</label>
+          <input type="text" id="model" name="model" value=""
+                 placeholder="<%= @settings.find { |s| s[:setting].to_s == "gemini_model" }&.dig(:value) || "gemini-3.5-flash" %>">
+
+          <label for="bot_models">Bot 模型對應（JSON）— ai_username → model</label>
+          <textarea id="bot_models" name="bot_models" rows="5" style="width:100%;max-width:520px;font-family:monospace;font-size:12px;"><%= @settings.find { |s| s[:setting].to_s == "gemini_bot_models" }&.dig(:value) %></textarea>
+          <div class="hint">格式：{"ai_gemini_3_6_flash": "gemini-3.6-flash", "ai_deepseek_v4_flash": "deepseek-v4-flash", "ai_mimo_v2_5": "mimo-v2.5"}</div>
+
+          <label for="daily_limit">每用戶每日呼叫上限</label>
+          <input type="number" id="daily_limit" name="daily_limit" value=""
+                 placeholder="<%= @settings.find { |s| s[:setting].to_s == "gemini_daily_limit_per_user" }&.dig(:value) %>">
+
+          <label for="history_posts">聊天時帶入的先前貼文數</label>
+          <input type="number" id="history_posts" name="history_posts" value=""
+                 placeholder="<%= @settings.find { |s| s[:setting].to_s == "gemini_chat_history_posts" }&.dig(:value) %>">
+
+          <label for="allowed_groups">允許呼喚 bot 的群組（用 | 分隔）</label>
+          <input type="text" id="allowed_groups" name="allowed_groups" value=""
+                 placeholder="<%= @settings.find { |s| s[:setting].to_s == "gemini_allowed_groups" }&.dig(:value) || "trust_level_1|trust_level_2|trust_level_3|trust_level_4" %>">
+        </div>
+
+        <%= submit_tag "全部儲存", class: "btn btn-primary", style: "margin-top:14px" %>
       <% end %>
     </div>
   <% end %>
@@ -68,7 +90,7 @@
     <div class="agq-sub">
       資料擷取於 <%= Time.at(@quota["fetched_at"]).in_time_zone.strftime("%Y-%m-%d %H:%M:%S") %>（本機時間）·
       來源 fetchAvailableModels/quotaInfo + OpenCode /usage ·
-      <a href="/admin/plugins/antigravity-quota" data-auto-route-alt="">重新整理</a>
+      <a href="/admin/plugins/sloth-ai" data-auto-route-alt="">重新整理</a>
     </div>
     <table>
       <thead><tr><th>模型</th><th>剩餘額度</th><th>重設倒數</th></tr></thead>

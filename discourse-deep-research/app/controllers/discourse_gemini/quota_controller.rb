@@ -5,8 +5,8 @@ module DiscourseGemini
   #
   # Serves:
   #   GET  /quota                          → public quota-only page
-  #   GET  /admin/plugins/antigravity-quota (and /full) → admin: settings + quota
-  #   POST /admin/plugins/antigravity-quota/settings → admin: save settings
+  #   GET  /admin/plugins/sloth-ai (and /full) → admin: settings + quota
+  #   POST /admin/plugins/sloth-ai/settings → admin: save settings
   #
   # Quota comes from the bridge's /api/quota (Antigravity + OpenCode usage).
   class QuotaController < ::ApplicationController
@@ -18,6 +18,9 @@ module DiscourseGemini
       gemini_enabled gemini_bridge_url gemini_bridge_token
       gemini_opencode_api_key gemini_model gemini_bot_models
       gemini_daily_limit_per_user gemini_chat_history_posts
+      gemini_allowed_groups gemini_deep_research_enabled
+      gemini_deep_research_max_questions gemini_chat_enabled
+      gemini_bot_username
     ].freeze
 
     def index
@@ -40,24 +43,40 @@ module DiscourseGemini
       if params[:bridge_token].present?
         SiteSetting.gemini_bridge_token = params[:bridge_token].to_s.strip
       end
-      # only update URL if a non-default value was submitted
-      if params[:bridge_url].present? && params[:bridge_url] != "http://127.0.0.1:8787"
+      if params[:bridge_url].present?
         SiteSetting.gemini_bridge_url = params[:bridge_url].to_s.strip
+      end
+      if params[:model].present?
+        SiteSetting.gemini_model = params[:model].to_s.strip
+      end
+      if params[:bot_models].present?
+        JSON.parse(params[:bot_models].to_s)
+        SiteSetting.gemini_bot_models = params[:bot_models].to_s.strip
+      end
+      if params[:daily_limit].present?
+        SiteSetting.gemini_daily_limit_per_user = params[:daily_limit].to_i
+      end
+      if params[:history_posts].present?
+        SiteSetting.gemini_chat_history_posts = params[:history_posts].to_i
+      end
+      if params[:allowed_groups].present?
+        SiteSetting.gemini_allowed_groups = params[:allowed_groups].to_s.strip
       end
 
       flash[:sloth_saved] = true
     rescue StandardError => e
       flash[:sloth_error] = e.message
     ensure
-      redirect_to "/admin/plugins/antigravity-quota"
+      redirect_to "/admin/plugins/sloth-ai"
     end
 
     private
 
     def plugin_settings
-      all = SiteSetting.all_settings
-      settings = all + Plugin::Instance.settings
-      settings.select { |s| SETTING_KEYS.include?(s[:setting].to_s) }
+      # Settings are hidden from the native admin page via the
+      # hidden_site_settings modifier — load them here explicitly.
+      SiteSetting.all_settings(include_hidden: true)
+                      .select { |s| SETTING_KEYS.include?(s[:setting].to_s) }
     rescue StandardError
       []
     end

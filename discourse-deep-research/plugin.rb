@@ -23,13 +23,28 @@ register_asset "stylesheets/gemini.scss"
 load File.expand_path("../lib/deep_research_bridge.rb", __FILE__)
 require_relative "lib/discourse_gemini"
 
-add_admin_route "discourse_gemini.quota.title", "antigravity-quota"
+add_admin_route "discourse_gemini.quota.title", "sloth-ai"
 
 # jobs auto-load via Discourse plugin job autoloading
 
 after_initialize do
   Discourse::Application.routes.append do
     mount DiscourseGemini::Engine, at: "/"
+  end
+
+  # Hide all Sloth AI plugin settings from the native Settings page
+  # (admin/site_settings/category/discourse_gemini would otherwise auto-render
+  # them). The plugin's own admin page (/admin/plugins/sloth-ai) is the single
+  # place to manage them. Settings still work via SiteSetting.* accessors and
+  # keep their defaults from settings.yml.
+  register_modifier(:hidden_site_settings) do |hidden|
+    hidden + %i[
+      gemini_enabled gemini_bridge_url gemini_bridge_token gemini_opencode_api_key
+      gemini_allowed_groups gemini_bot_username gemini_model
+      gemini_daily_limit_per_user gemini_bot_models gemini_chat_enabled
+      gemini_chat_history_posts gemini_deep_research_enabled
+      gemini_deep_research_max_questions
+    ]
   end
 
   # When an admin changes the OpenCode Go API key site setting, push it to
