@@ -38,23 +38,28 @@ if not client.login(USERNAME, PASSWORD):
 
 # Start research the way the web UI does: no model/iterations overrides, so
 # the server uses the user's saved settings (strategy, iterations, LLM).
+payload = {
+    "query": topic,
+    "search_engines": ["searxng"],
+    "mode": "full",
+    # Forum-run tuning (env-overridable): keep the official pipeline but
+    # bound it so runs finish in ~1h instead of 6h+:
+    #   - source_based: finite strategy — langgraph-agent's recursion was
+    #     the runaway (8k+ sources, repeated recursion-limit synthesis)
+    #   - moderate iterations / questions / result cap
+    "strategy": os.environ.get("LDR_STRATEGY", "source_based"),
+    "iterations": int(os.environ.get("LDR_ITERATIONS", "4")),
+    "max_results": int(os.environ.get("LDR_MAX_RESULTS", "20")),
+    "questions_per_iteration": int(os.environ.get("LDR_QPI", "3")),
+}
+# Model: NOT forced — when LDR_MODEL is unset, omit the field so LDR uses
+# the default model configured in its own settings (llm.model), letting the
+# admin manage the model in the LDR UI. LDR_MODEL env overrides for testing.
+if os.environ.get("LDR_MODEL"):
+    payload["model"] = os.environ["LDR_MODEL"]
 response = client.session.post(
     f"{BASE_URL}/research/api/start",
-    json={
-        "query": topic,
-        "search_engines": ["searxng"],
-        "mode": "full",
-        # Forum-run tuning (env-overridable): keep the official pipeline but
-        # bound it so runs finish in ~1h instead of 6h+:
-        #   - source_based: finite strategy — langgraph-agent's recursion was
-        #     the runaway (8k+ sources, repeated recursion-limit synthesis)
-        #   - moderate iterations / questions / result cap
-        "model": os.environ.get("LDR_MODEL", "deepseek-v4-flash"),
-        "strategy": os.environ.get("LDR_STRATEGY", "source_based"),
-        "iterations": int(os.environ.get("LDR_ITERATIONS", "4")),
-        "max_results": int(os.environ.get("LDR_MAX_RESULTS", "20")),
-        "questions_per_iteration": int(os.environ.get("LDR_QPI", "3")),
-    },
+    json=payload,
     headers=client._api_headers(),
 )
 if response.status_code != 200:
