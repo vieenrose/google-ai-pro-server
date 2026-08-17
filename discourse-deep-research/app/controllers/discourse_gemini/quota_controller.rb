@@ -94,7 +94,7 @@ module DiscourseGemini
       models.each do |model_id|
         next unless available.include?(model_id)
 
-        bot_name = "ai_#{model_id}"
+        bot_name = DiscourseGemini.bot_username_for(model_id)
         unless DiscourseGemini.valid_bot_username?(bot_name)
           # keep the previous (short) name if this model was enabled before,
           # e.g. ai_gemini_image for gemini-3.1-flash-image

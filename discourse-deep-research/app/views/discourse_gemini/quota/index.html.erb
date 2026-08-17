@@ -99,12 +99,13 @@
         <div style="font-weight:600;font-size:13px;color:var(--primary-medium,#777);margin:6px 0 4px;">Google AI Pro（Antigravity）</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 12px;">
           <% ag_all.each do |m| %>
-            <% id = m["id"]; name = m["name"] || id
-               bot = "ai_#{id}"
+            <% id = m["id"]
+               name = DiscourseGemini.normalize_model_name(m["name"] || id)
+               bot = DiscourseGemini.bot_username_for(id)
                enabled = config.key?(bot) || used.include?(id)
-               too_long = !DiscourseGemini.valid_bot_username?(bot) %>
+               no_alias = !DiscourseGemini.valid_bot_username?(bot) %>
             <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:2px 0;cursor:pointer;">
-              <input type="checkbox" name="model[]" value="<%= id %>" <%= enabled ? "checked" : "" %> <%= too_long ? "disabled title=\"帳號名稱超過 #{SiteSetting.max_username_length} 字上限\"" : "" %>>
+              <input type="checkbox" name="model[]" value="<%= id %>" <%= enabled ? "checked" : "" %> <%= no_alias ? "disabled title=\"無法產生 20 字內帳號\"" : "" %>>
               <span><%= name %></span>
             </label>
           <% end %>
@@ -112,12 +113,14 @@
         <div style="font-weight:600;font-size:13px;color:var(--primary-medium,#777);margin:10px 0 4px;">OpenCode Go（deepseek / mimo）</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 12px;">
           <% (@models["opencode"] || []).each do |m| %>
-            <% id = m["id"]; bot = "ai_#{id}"
+            <% id = m["id"]
+               name = DiscourseGemini.normalize_model_name(id)
+               bot = DiscourseGemini.bot_username_for(id)
                enabled = config.key?(bot) || used.include?(id)
-               too_long = !DiscourseGemini.valid_bot_username?(bot) %>
+               no_alias = !DiscourseGemini.valid_bot_username?(bot) %>
             <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:2px 0;cursor:pointer;">
-              <input type="checkbox" name="model[]" value="<%= id %>" <%= enabled ? "checked" : "" %> <%= too_long ? "disabled title=\"帳號名稱超過 #{SiteSetting.max_username_length} 字上限\"" : "" %>>
-              <span><%= id %></span>
+              <input type="checkbox" name="model[]" value="<%= id %>" <%= enabled ? "checked" : "" %> <%= no_alias ? "disabled title=\"無法產生 20 字內帳號\"" : "" %>>
+              <span><%= name %></span>
             </label>
           <% end %>
         </div>

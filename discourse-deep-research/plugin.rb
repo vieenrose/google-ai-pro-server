@@ -138,9 +138,103 @@ after_initialize do
 
     # Bot username for a native model id: ai_ + model name, e.g.
     # "gemini-3.6-flash" → "ai_gemini-3.6-flash".
+    #
+    # Usernames are capped at SiteSetting.max_username_length (20), so for
+    # over-long model ids we drop the tier suffix: "gemini-3.7-flash-tiered"
+    # → "ai_gemini-3.7-flash" (the config still maps to the real model id).
+    # If a model is already enabled under a shorter legacy name (e.g.
+    # ai_gemini_image for gemini-3.1-flash-image), that name is reused.
     def self.bot_username_for(model_id)
-      "ai_#{model_id}"
+      name = "ai_#{model_id}"
+      return name if valid_bot_username?(name)
+
+      # reuse an existing config mapping (legacy short names)
+      existing = bot_config.key(model_id)
+      return existing if existing && valid_bot_username?(existing)
+
+      short = model_id.dup
+      # drop trailing tier markers until the name fits
+      short = short.sub(/-(tiered|thinking|preview|image)\z/, "") while short =~ /-(tiered|thinking|preview|image)\z/
+      alias_name = "ai_#{short}"
+      return alias_name if valid_bot_username?(alias_name)
+
+      # last resort: truncate to the max length
+      "ai_#{model_id}"[0, SiteSetting.max_username_length]
     end
+
+    # Pretty display name for a raw model id, e.g.
+    #   "deepseek-v4-flash"        → "DeepSeek V4 Flash"
+    #   "minimax-m3"              → "MiniMax M3"
+    #   "glm-5.3"                 → "GLM 5.3"
+    #   "gemini-3.6-flash-high"   → "Gemini 3.6 Flash (High)"
+    #   "qwen3.8-max"             → "Qwen3.8 Max"
+    #
+    # Names that are already humanized (spaces, mixed case, parentheses — e.g.
+    # the Antigravity quota displayName "Gemini 3.6 Flash (High)") are returned
+    # unchanged; only raw lowercase ids get normalized.
+    def self.normalize_model_name(raw)
+      s = raw.to_s.strip
+      return s if s.empty?
+
+      # already humanized (contains a space or an uppercase letter)
+      return s if s.include?(" ") || s =~ /[A-Z]/
+
+      # uppercase known vendor prefixes
+      vendor_map = {
+        "gemini" => "Gemini", "deepseek" => "DeepSeek", "mimo" => "Mimo",
+        "claude" => "Claude", "minimax" => "MiniMax", "kimi" => "Kimi",
+        "glm" => "GLM", "qwen" => "Qwen", "grok" => "Grok",
+        "gpt" => "GPT", "hy3" => "Hy3", "tab" => "Tab",
+        "gpt-oss" => "GPT-OSS",
+      }
+      parts = s.split("-")
+      first = parts.shift.to_s
+      vendor = vendor_map[first] || vendor_map["#{first}-#{parts[0]}"] || first.capitalize
+      parts.shift if vendor_map["#{first}-#{parts[0]}"] # consumed second part as vendor
+
+      # tier suffix → parenthesized label
+      tier = {
+        "high" => "(High)", "low" => "(Low)", "medium" => "(Medium)",
+        "thinking" => "(Thinking)", "tiered" => "(Tiered)",
+        "lite" => "(Lite)", "preview" => "(Preview)",
+        "omni" => "(Omni)", "code" => "(Code)",
+      }
+      # bare model-tier words (no parens): pro, flash, max, plus, luna …
+      bare = { "pro" => "Pro", "flash" => "Flash", "max" => "Max",
+               "plus" => "Plus", "luna" => "Luna", "min" => "Min" }
+      rest = []
+      numeric_run = []
+      flush_run = lambda do
+        unless numeric_run.empty?
+          rest << numeric_run.join(".")  # "4","6" → "4.6"
+          numeric_run = []
+        end
+      end
+      parts.each do |p|
+        if p =~ /\A\d/
+          numeric_run << p
+        else
+          flush_run.call
+          if tier.key?(p.downcase)
+            rest << tier[p.downcase]
+          elsif p.downcase == "extra" && parts[parts.index(p) + 1]&.downcase == "low"
+            rest << "(Extra Low)"
+            parts[parts.index(p) + 1] = "__skip__"
+          elsif bare.key?(p.downcase)
+            rest << bare[p.downcase]
+          elsif p =~ /\Av\d/i
+            rest << p.sub(/\Av/i, "V").upcase
+          else
+            rest << p.capitalize unless p == "__skip__"
+          end
+        end
+      end
+      flush_run.call
+      name = ([vendor] + rest).join(" ")
+      # normalise paren spacing: "Flash (High)", never "(X)(Y)"
+      name = name.gsub(/ {2,}/, " ").gsub(/\(([^)]*)\) \(/) { "(#{$1}) (" }.strip
+    end
+
 
     def self.valid_bot_username?(username)
       UsernameValidator.new(username).valid_format?

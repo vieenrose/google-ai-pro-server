@@ -1581,7 +1581,7 @@ class OpenCodeBackend:
         return out
 
     def list_models(self) -> list[dict]:
-        """OpenCode Go models relevant to the forum bots (deepseek/mimo).
+        """All OpenCode Go models available on this key.
 
         Returns [{id, family}] — used by the Sloth AI admin page to offer
         bot creation for every usable OpenCode model.
@@ -1594,7 +1594,7 @@ class OpenCodeBackend:
         return [
             {"id": i, "family": i.split("-")[0] if "-" in i else i}
             for i in ids
-            if i.startswith(("deepseek", "mimo"))
+            if i
         ]
 
     def _post(self, path: str, body: dict, timeout: int = 180) -> dict:
