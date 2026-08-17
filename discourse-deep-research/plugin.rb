@@ -40,22 +40,21 @@ after_initialize do
   # the bridge immediately (the bridge persists it over its env var).
   on(:site_setting_changed) do |name, _old_val, current|
     case name
-    when :gemini_opencode_api_key
+    when :gemini_opencode_api_key, :gemini_together_api_key
+      # Keys are now managed in Discourse AI (ai_secrets) and synced via
+      # sync-providers; the site-setting push path is deprecated. Keep the
+      # legacy push so existing stored values still reach the bridge until
+      # the registry replaces them.
       key = current.to_s
       if key.present?
         begin
-          GeminiBridge.new.push_opencode_key(key)
+          if name == :gemini_opencode_api_key
+            GeminiBridge.new.push_opencode_key(key)
+          else
+            GeminiBridge.new.push_together_key(key)
+          end
         rescue StandardError => e
-          Rails.logger.warn("[discourse-deep-research] push_opencode_key failed: #{e.message}")
-        end
-      end
-    when :gemini_together_api_key
-      key = current.to_s
-      if key.present?
-        begin
-          GeminiBridge.new.push_together_key(key)
-        rescue StandardError => e
-          Rails.logger.warn("[discourse-deep-research] push_together_key failed: #{e.message}")
+          Rails.logger.warn("[discourse-deep-research] push key failed: #{e.message}")
         end
       end
     end

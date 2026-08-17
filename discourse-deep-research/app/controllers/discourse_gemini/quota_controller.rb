@@ -16,7 +16,7 @@ module DiscourseGemini
 
     SETTING_KEYS = %w[
       gemini_enabled gemini_bridge_url gemini_bridge_token
-      gemini_opencode_api_key gemini_together_api_key gemini_model
+      gemini_model
       gemini_daily_limit_per_user gemini_chat_history_posts
       gemini_allowed_groups gemini_deep_research_enabled
       gemini_deep_research_max_questions gemini_chat_enabled
@@ -48,12 +48,9 @@ module DiscourseGemini
     def update_settings
       raise Discourse::InvalidAccess unless current_user&.admin?
 
-      if params[:opencode_api_key].present?
-        SiteSetting.gemini_opencode_api_key = params[:opencode_api_key].to_s.strip
-      end
-      if params[:together_api_key].present?
-        SiteSetting.gemini_together_api_key = params[:together_api_key].to_s.strip
-      end
+      # NOTE: OpenCode/Together API keys are managed in Discourse AI
+      # (ai_secrets) and synced to the bridge via sync-providers. The old
+      # site-setting fields were removed.
       if params[:bridge_token].present?
         SiteSetting.gemini_bridge_token = params[:bridge_token].to_s.strip
       end

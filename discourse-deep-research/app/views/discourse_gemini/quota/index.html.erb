@@ -109,23 +109,11 @@
   <% if @admin_page && current_user&.admin? %>
     <div class="agq-box">
       <h3>⚙️ 設定 / Settings</h3>
+      <div class="hint" style="margin-bottom:8px;">
+        🔑 API keys 由 <b>Discourse AI</b> 管理（Admin → Plugins → Discourse AI → AI Secrets）。
+        改 key 後按上方「從 Discourse AI 同步模型」即可生效。
+      </div>
       <%= form_tag "/admin/plugins/sloth-ai/settings", method: :post do %>
-        <label for="opencode_api_key">OpenCode Go API Key（deepseek / mimo）</label>
-        <% oc = @settings.find { |s| s[:setting].to_s == "gemini_opencode_api_key" }
-           oc_set = oc && oc[:value].present? %>
-        <input type="password" id="opencode_api_key" name="opencode_api_key"
-               value="" autocomplete="new-password"
-               placeholder="<%= oc_set ? "已設定 (#{oc[:value].to_s[0,10]}…)，留空則不變更" : "輸入 API key" %>">
-        <div class="hint">留空 = 保留目前的 key。儲存後 plugin 自動推送到 bridge，立即生效。</div>
-
-        <label for="together_api_key">Together AI API Key（Prism-ML/Ternary-Bonsai-27B）</label>
-        <% tj = @settings.find { |s| s[:setting].to_s == "gemini_together_api_key" }
-           tj_set = tj && tj[:value].present? %>
-        <input type="password" id="together_api_key" name="together_api_key"
-               value="" autocomplete="new-password"
-               placeholder="<%= tj_set ? "已設定 (#{tj[:value].to_s[0,10]}…)，留空則不變更" : "輸入 Together API key" %>">
-        <div class="hint">留空 = 保留目前的 key。儲存後 plugin 自動推送到 bridge，立即生效。</div>
-
         <label for="bridge_token">Bridge Token</label>
         <% bt = @settings.find { |s| s[:setting].to_s == "gemini_bridge_token" } %>
         <input type="password" id="bridge_token" name="bridge_token" value="" autocomplete="new-password"

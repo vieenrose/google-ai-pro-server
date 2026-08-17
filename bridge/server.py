@@ -608,13 +608,12 @@ tick(); setInterval(tick, 1000);
         if not question or not Path(py).exists() or not script.exists():
             yield "\n\n[agent unavailable — answer from model knowledge]"
             return
-        # provider endpoint for Together AI (OpenCode keeps its env defaults)
+        # provider endpoint: use the routed backend's own url/key (registry
+        # models from Discourse AI carry their provider's config; OpenCode
+        # backend falls back to its env defaults which the agent also reads).
         backend = self.backend_for(model)
-        base_url = ""
-        api_key = ""
-        if getattr(backend, "name", "") == "together":
-            base_url = backend.base_url
-            api_key = backend.api_key
+        base_url = getattr(backend, "base_url", "") or ""
+        api_key = getattr(backend, "api_key", "") or ""
         # prior history = all messages except the last user turn (the live question)
         prior = list(messages or [])
         for m in reversed(prior):
