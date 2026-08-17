@@ -444,6 +444,23 @@ after_initialize do
     # Group quota models that share the same token pool (same remaining
     # fraction + same reset time). Returns [{names, keys, remaining,
     # reset_time}] so the monitor can show one row per pool.
+    def self.sync_providers_from_discourse_ai
+      # Read Discourse AI's model registry (llm_models) + secrets and push to
+      # the bridge so it can route any registered model by exact id.
+      # Returns {count:, models:} or raises on bridge failure.
+      registry = {}
+      if defined?(LlmModel) && LlmModel.table_exists?
+        LlmModel.where.not(provider: nil).find_each do |llm|
+          next if llm.provider == "fake"
+          url = llm.url.to_s.strip
+          next if url.blank?
+          key = llm.api_key.to_s.strip # resolves ai_secret automatically
+          registry[llm.name] = { "url" => url, "api_key" => key, "provider" => llm.provider }
+        end
+      end
+      GeminiBridge.new.push_providers(registry)
+    end
+
     def self.group_quota_models(models)
       groups = {}
       (models || []).each do |m|
@@ -465,6 +482,14 @@ after_initialize do
   ::DiscourseGemini.ensure_deep_research_bot!
   ::DiscourseGemini.ensure_local_deep_research_bot!
   ::DiscourseGemini.ensure_chat_bots!
+  # Push the Discourse AI model registry (llm_models + ai_secrets) to the
+  # bridge so registered models can be routed by exact id. Best-effort — the
+  # admin can re-sync from the Sloth AI page.
+  begin
+    ::DiscourseGemini.sync_providers_from_discourse_ai
+  rescue StandardError => e
+    Rails.logger.warn("[discourse-deep-research] providers sync failed: #{e.message}")
+  end
 
   # ── chat rendering fix ───────────────────────────────────────────────────
   # Chat's markdown does not render <details> HTML, so the folded ai-thinking

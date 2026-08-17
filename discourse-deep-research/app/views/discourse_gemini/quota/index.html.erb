@@ -95,6 +95,19 @@
 
   <% if @admin_page && current_user&.admin? %>
     <div class="agq-box">
+      <h3>📦 Discourse AI 同步 / Model Registry Sync</h3>
+      <div class="hint" style="margin-bottom:8px;">
+        模型與 API key 由 <b>Discourse AI</b> 管理（Admin → Plugins → Discourse AI → AI LLMs / AI Secrets）。
+        按此按鈕把 Discourse AI 的模型註冊表 + 密鑰同步到 bridge，Sloth AI 就能把這些模型變成論壇 bot。
+      </div>
+      <%= form_tag "/admin/plugins/sloth-ai/sync-providers", method: :post do %>
+        <%= submit_tag "從 Discourse AI 同步模型", class: "btn btn-default", style: "margin-top:4px" %>
+      <% end %>
+    </div>
+  <% end %>
+
+  <% if @admin_page && current_user&.admin? %>
+    <div class="agq-box">
       <h3>⚙️ 設定 / Settings</h3>
       <%= form_tag "/admin/plugins/sloth-ai/settings", method: :post do %>
         <label for="opencode_api_key">OpenCode Go API Key（deepseek / mimo）</label>

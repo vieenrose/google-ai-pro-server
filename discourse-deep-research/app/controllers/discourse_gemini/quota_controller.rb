@@ -80,6 +80,19 @@ module DiscourseGemini
       redirect_to "/admin/plugins/sloth-ai"
     end
 
+    # POST /admin/plugins/sloth-ai/sync-providers — pull model registry +
+    # secrets from Discourse AI (llm_models + ai_secrets) into the bridge.
+    def sync_providers
+      raise Discourse::InvalidAccess unless current_user&.admin?
+
+      result = DiscourseGemini.sync_providers_from_discourse_ai
+      flash[:sloth_saved] = "✅ 已從 Discourse AI 同步 #{result["synced"]["count"]} 個模型到 bridge（#{result["synced"]["models"].first(5).join(", ")}…）"
+    rescue StandardError => e
+      flash[:sloth_error] = "同步失敗：#{e.message[0,200]}"
+    ensure
+      redirect_to "/admin/plugins/sloth-ai"
+    end
+
     # POST /admin/plugins/sloth-ai/reauth — start Google AI Pro re-auth
     # (returns the Google sign-in URL + verifier for the next step).
     def reauth_url

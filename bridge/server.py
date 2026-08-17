@@ -127,6 +127,71 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
     OPENCODE_KEY_FILE = str(Path(__file__).resolve().parent / ".opencode_key")
     TOGETHER_KEY_FILE = str(Path(__file__).resolve().parent / ".together_key")
+    PROVIDERS_FILE = str(Path(__file__).resolve().parent / ".providers.json")
+
+    # Registry synced from Discourse AI (ai-llms + ai-secrets):
+    # {model_id: {url, api_key, provider}}
+    providers_registry: dict = {}
+
+    @classmethod
+    def _load_providers_registry(cls) -> dict:
+        try:
+            with open(cls.PROVIDERS_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except (OSError, json.JSONDecodeError):
+            pass
+        return {}
+
+    @classmethod
+    def _save_providers_registry(cls, registry: dict) -> None:
+        try:
+            with open(cls.PROVIDERS_FILE, "w", encoding="utf-8") as f:
+                json.dump(registry, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+        cls.providers_registry = registry
+
+    @classmethod
+    def _sync_providers(cls, registry: dict) -> dict:
+        """Replace the model→{url,api_key} registry (pushed by the Discourse
+        plugin from Discourse AI's llm_models + ai_secrets). Returns counts.
+
+        Entries whose URL points back at this bridge are skipped (they would
+        loop); those models fall through to the normal backend routing.
+        """
+        clean = {}
+        for model_id, cfg in (registry or {}).items():
+            if not model_id or not isinstance(cfg, dict):
+                continue
+            url = (cfg.get("url") or "").strip().rstrip("/")
+            key = (cfg.get("api_key") or "").strip()
+            if not url:
+                continue
+            # skip self-referencing entries (bridge as the model's own URL)
+            if "8787" in url or "127.0.0.1" in url or "172.17.0.1" in url:
+                continue
+            clean[model_id] = {"url": url, "api_key": key, "provider": cfg.get("provider", "open_ai")}
+        cls._save_providers_registry(clean)
+        # reset cached backends so next call picks up the new key/url
+        cls.opencode_backend = None
+        cls.together_backend = None
+        return {"count": len(clean), "models": sorted(clean.keys())}
+
+    @classmethod
+    def _backend_for_registry(cls, model: str):
+        """Return an OpenAI-compatible backend for a registry model, or None."""
+        cfg = cls.providers_registry.get(model)
+        if not cfg:
+            cls.providers_registry = cls._load_providers_registry()
+            cfg = cls.providers_registry.get(model)
+        if not cfg:
+            return None
+        from gemini_backends import OpenCodeBackend  # noqa: E402
+
+        return OpenCodeBackend(base_url=cfg["url"], api_key=cfg.get("api_key", ""))
+
 
     @classmethod
     def _load_together_key_file(cls) -> str:
@@ -189,12 +254,24 @@ class BridgeHandler(BaseHTTPRequestHandler):
     TOGETHER_PREFIXES = ("prism-ml", "ternary", "bonzai", "bonsai", "together")
 
     def backend_for(self, model):
-        """Route models to the right backend: OpenCode Go / Together AI / Gemini."""
+        """Route models to the right backend.
+
+        Priority: (1) Discourse AI registry (exact model id, from
+        llm_models+ai_secrets sync), (2) OpenCode prefixes, (3) Together
+        prefixes, (4) default Gemini backend.
+        """
         m = (model or "").lower()
+        # 1) registry (exact id match, case-insensitive)
+        reg = BridgeHandler.providers_registry or BridgeHandler._load_providers_registry()
+        for reg_id in reg:
+            if reg_id.lower() == m:
+                return BridgeHandler._backend_for_registry(reg_id)
+        # 2) Together
         if m.startswith(self.TOGETHER_PREFIXES):
             if BridgeHandler.together_backend is None:
                 BridgeHandler._refresh_together_backend()
             return BridgeHandler.together_backend
+        # 3) OpenCode
         if m.startswith(self.OPENCODE_PREFIXES):
             if BridgeHandler.opencode_backend is None:
                 BridgeHandler._refresh_opencode_backend()
@@ -258,6 +335,18 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     if tj_key
                     else []
                 )
+                # Discourse AI registry models (open_ai provider) get merged in
+                # so admins can enable them as forum bots.
+                reg = BridgeHandler.providers_registry or BridgeHandler._load_providers_registry()
+                reg_models = [
+                    {"id": mid, "name": mid}
+                    for mid in sorted(reg)
+                    if not str(mid).startswith(("gemini-", "claude-", "gpt-"))
+                ]
+                oc_ids = {m["id"] for m in oc_models}
+                tj_ids = {m["id"] for m in tj_models}
+                extra = [m for m in reg_models if m["id"] not in oc_ids and m["id"] not in tj_ids]
+                oc_models = oc_models + extra
                 # models Google marks deprecated (e.g. gemini-3.1-pro-high →
                 # gemini-pro-agent) fail with HTTP 400 — hide them from the
                 # enable list so admins don't create dead bots.
@@ -442,6 +531,11 @@ tick(); setInterval(tick, 1000);
             BridgeHandler._refresh_together_backend()
             sys.stderr.write(f"[bridge] Together AI API key updated by admin ({key[:8]}...)\n")
             self._send(200, {"ok": True, "updated": True})
+        elif self.path == "/v1/config/providers":
+            registry = body.get("providers") or {}
+            res = BridgeHandler._sync_providers(registry)
+            sys.stderr.write(f"[bridge] providers registry synced: {res['count']} models\n")
+            self._send(200, {"ok": True, "synced": res})
         elif self.path == "/v1/config/antigravity-auth":
             import agy_auth  # noqa: E402
 

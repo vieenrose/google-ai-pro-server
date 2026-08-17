@@ -1,0 +1,22 @@
+{
+  "deepseek-v4-flash": {
+    "url": "https://opencode.ai/zen/go/v1",
+    "api_key": "sk-s7z9fJEoxWwmauEdp0OWXdFOGZIsODf9wc3Dx4DrUPp0EQDZthHYrsmmbhBPYNEX",
+    "provider": "open_ai"
+  },
+  "deepseek-v4-pro": {
+    "url": "https://opencode.ai/zen/go/v1",
+    "api_key": "sk-s7z9fJEoxWwmauEdp0OWXdFOGZIsODf9wc3Dx4DrUPp0EQDZthHYrsmmbhBPYNEX",
+    "provider": "open_ai"
+  },
+  "mimo-v2.5": {
+    "url": "https://opencode.ai/zen/go/v1",
+    "api_key": "sk-s7z9fJEoxWwmauEdp0OWXdFOGZIsODf9wc3Dx4DrUPp0EQDZthHYrsmmbhBPYNEX",
+    "provider": "open_ai"
+  },
+  "Prism-ML/Ternary-Bonsai-27B": {
+    "url": "https://api.together.ai/v1",
+    "api_key": "tgp_v1_-Ww8nJlcRSOjBUicPWq-XQYBuNQynxrknGkwphbw8wY",
+    "provider": "open_ai"
+  }
+}

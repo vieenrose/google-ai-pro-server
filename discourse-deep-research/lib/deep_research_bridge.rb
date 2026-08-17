@@ -47,6 +47,13 @@ class GeminiBridge
     post("/v1/config/together-key", { api_key: api_key.to_s.strip })
   end
 
+  # POST /v1/config/providers → { ok:, synced: {count, models} } — pushes the
+  # full model registry (from Discourse AI llm_models + ai_secrets) so the
+  # bridge can route any registered model by exact id.
+  def push_providers(providers)
+    post("/v1/config/providers", { providers: providers })
+  end
+
   # GET /api/models → { antigravity: [{id,name}], opencode: [{id,family}] }
   def models
     get("/api/models")
