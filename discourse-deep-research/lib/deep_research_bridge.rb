@@ -41,6 +41,12 @@ class GeminiBridge
     post("/v1/config/opencode-key", { api_key: api_key.to_s.strip })
   end
 
+  # POST /v1/config/together-key → { ok:, updated: } — pushes the admin-set
+  # Together AI API key to the bridge.
+  def push_together_key(api_key)
+    post("/v1/config/together-key", { api_key: api_key.to_s.strip })
+  end
+
   # GET /api/models → { antigravity: [{id,name}], opencode: [{id,family}] }
   def models
     get("/api/models")

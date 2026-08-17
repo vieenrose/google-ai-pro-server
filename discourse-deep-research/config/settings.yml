@@ -19,6 +19,11 @@ discourse_gemini:
     secret: true
     description: "API key for OpenCode Go (deepseek-v4-flash / mimo-v2.5). When set here it overrides the bridge's OPENCODE_API_KEY env var. The admin can rotate it at any time — the plugin pushes it to the bridge via POST /v1/config/opencode-key."
 
+  gemini_together_api_key:
+    default: ""
+    secret: true
+    description: "API key for Together AI (e.g. Prism-ML/Ternary-Bonsai-27B). Pushed to the bridge via POST /v1/config/together-key when changed."
+
   gemini_allowed_groups:
     default: "trust_level_1|trust_level_2|trust_level_3|trust_level_4"
     type: group_list

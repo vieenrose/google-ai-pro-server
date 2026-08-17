@@ -99,11 +99,11 @@ def web_search(query: str) -> str:
     return "\n".join(lines)
 
 
-def run(question: str, model_id: str = "deepseek-v4-flash", agent_type: str = "code", context: str = "") -> dict:
+def run(question: str, model_id: str = "deepseek-v4-flash", agent_type: str = "code", context: str = "", base_url: str = "", api_key: str = "") -> dict:
     model = OpenAIServerModel(
         model_id=model_id,
-        api_base=OPENCODE_BASE,
-        api_key=OPENCODE_KEY or "none",
+        api_base=base_url or OPENCODE_BASE,
+        api_key=api_key or OPENCODE_KEY or "none",
     )
     if agent_type == "tools":
         agent = ToolCallingAgent(tools=[web_search], model=model, max_steps=3, verbosity_level=0)
@@ -165,4 +165,9 @@ if __name__ == "__main__":
             context = _format_context(_json.loads(sys.argv[3]))
         except Exception:
             context = sys.argv[3]
-    print(run(q, agent_type=agent_type, context=context)["answer"])
+    # optional 4th/5th args: base_url / api_key for non-OpenCode providers
+    # (Together AI etc.)
+    base_url = sys.argv[4] if len(sys.argv) > 4 else ""
+    api_key = sys.argv[5] if len(sys.argv) > 5 else ""
+    model_id = sys.argv[6] if len(sys.argv) > 6 else "deepseek-v4-flash"
+    print(run(q, agent_type=agent_type, context=context, base_url=base_url, api_key=api_key, model_id=model_id)["answer"])

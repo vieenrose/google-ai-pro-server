@@ -39,13 +39,24 @@ after_initialize do
   # When an admin changes the OpenCode Go API key site setting, push it to
   # the bridge immediately (the bridge persists it over its env var).
   on(:site_setting_changed) do |name, _old_val, current|
-    next unless name == :gemini_opencode_api_key
-    key = current.to_s
-    if key.present?
-      begin
-        GeminiBridge.new.push_opencode_key(key)
-      rescue StandardError => e
-        Rails.logger.warn("[discourse-deep-research] push_opencode_key failed: #{e.message}")
+    case name
+    when :gemini_opencode_api_key
+      key = current.to_s
+      if key.present?
+        begin
+          GeminiBridge.new.push_opencode_key(key)
+        rescue StandardError => e
+          Rails.logger.warn("[discourse-deep-research] push_opencode_key failed: #{e.message}")
+        end
+      end
+    when :gemini_together_api_key
+      key = current.to_s
+      if key.present?
+        begin
+          GeminiBridge.new.push_together_key(key)
+        rescue StandardError => e
+          Rails.logger.warn("[discourse-deep-research] push_together_key failed: #{e.message}")
+        end
       end
     end
   end
@@ -143,6 +154,16 @@ after_initialize do
     # save cycle (defaults to the current config).
     def self.bot_username_for(model_id, taken: nil)
       taken ||= bot_config
+
+      # Explicit short aliases for provider-qualified ids that cannot map to a
+      # valid ≤20-char username (slashes/colons). Key: model id → bot name.
+      alias_overrides = {
+        "Prism-ML/Ternary-Bonsai-27B" => "ai_ternary-bonsai27b",
+      }
+      if (ov = alias_overrides[model_id]) && valid_bot_username?(ov) && !bot_name_conflict?(ov, model_id, taken)
+        return ov
+      end
+
       full = "ai_#{model_id}"
       return full if valid_bot_username?(full) && !bot_name_conflict?(full, model_id, taken)
 
@@ -173,8 +194,9 @@ after_initialize do
         return candidate if valid_bot_username?(candidate) && !bot_name_conflict?(candidate, model_id, taken)
       end
 
-      # last resort: truncate to the max length
-      full[0, SiteSetting.max_username_length]
+      # last resort: sanitize invalid chars then truncate
+      safe = "ai_#{model_id}".gsub(/[^a-zA-Z0-9_.\-]/, "-")
+      safe[0, SiteSetting.max_username_length]
     end
 
     # True when +username+ is claimed by a different model id in +taken+.

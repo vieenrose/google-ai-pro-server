@@ -31,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "demo"))
 
-from gemini_backends import build_prompt, pick_backend, OpenCodeBackend  # noqa: E402
+from gemini_backends import build_prompt, pick_backend, OpenCodeBackend, TogetherAIBackend  # noqa: E402
 from deep_research import run_research  # noqa: E402
 
 import re as _re
@@ -122,9 +122,40 @@ class BridgeHandler(BaseHTTPRequestHandler):
     server_version = "GeminiBridge/0.3"
     backend = None
     opencode_backend = None
+    together_backend = None
     token = ""
 
     OPENCODE_KEY_FILE = str(Path(__file__).resolve().parent / ".opencode_key")
+    TOGETHER_KEY_FILE = str(Path(__file__).resolve().parent / ".together_key")
+
+    @classmethod
+    def _load_together_key_file(cls) -> str:
+        """Admin-set Together AI key persisted by the plugin (overrides env)."""
+        try:
+            with open(cls.TOGETHER_KEY_FILE, encoding="utf-8") as f:
+                key = f.read().strip()
+            if key:
+                return key
+        except OSError:
+            pass
+        return os.environ.get("TOGETHER_API_KEY", "")
+
+    @classmethod
+    def _save_together_key_file(cls, api_key: str) -> None:
+        try:
+            Path(cls.TOGETHER_KEY_FILE).write_text(api_key.strip(), encoding="utf-8")
+        except OSError:
+            pass
+
+    @classmethod
+    def _refresh_together_backend(cls) -> None:
+        """Create/repoint the Together AI backend with the current key."""
+        key = cls._load_together_key_file()
+        if cls.together_backend is not None:
+            cls.together_backend.api_key = key
+        else:
+            cls.together_backend = TogetherAIBackend(api_key=key)
+
 
     @classmethod
     def _load_opencode_key_file(cls) -> str:
@@ -155,10 +186,15 @@ class BridgeHandler(BaseHTTPRequestHandler):
             cls.opencode_backend = OpenCodeBackend(api_key=key)
 
     OPENCODE_PREFIXES = ("deepseek", "mimo", "glm", "grok", "kimi", "minimax", "qwen", "gpt-5.6", "hy3")
+    TOGETHER_PREFIXES = ("prism-ml", "ternary", "bonzai", "bonsai", "together")
 
     def backend_for(self, model):
-        """Route models that live on the OpenCode Zen Go endpoint."""
+        """Route models to the right backend: OpenCode Go / Together AI / Gemini."""
         m = (model or "").lower()
+        if m.startswith(self.TOGETHER_PREFIXES):
+            if BridgeHandler.together_backend is None:
+                BridgeHandler._refresh_together_backend()
+            return BridgeHandler.together_backend
         if m.startswith(self.OPENCODE_PREFIXES):
             if BridgeHandler.opencode_backend is None:
                 BridgeHandler._refresh_opencode_backend()
@@ -215,6 +251,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 gem = self.backend.quota()
                 BridgeHandler._refresh_opencode_backend()
                 oc_models = BridgeHandler.opencode_backend.list_models()
+                # Together AI: fixed list of enabled models (user-configured).
+                tj_key = BridgeHandler._load_together_key_file()
+                tj_models = (
+                    [{"id": "Prism-ML/Ternary-Bonsai-27B", "name": "Prism-ML/Ternary-Bonsai-27B"}]
+                    if tj_key
+                    else []
+                )
                 # models Google marks deprecated (e.g. gemini-3.1-pro-high →
                 # gemini-pro-agent) fail with HTTP 400 — hide them from the
                 # enable list so admins don't create dead bots.
@@ -234,7 +277,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
                     # gemini-3.5-flash-low labeled "(Medium)"). Send the raw
                     # id; the plugin normalizes it into a clean display name.
                     ag_models.append({"id": key, "name": key})
-                self._send(200, {"antigravity": ag_models, "opencode": oc_models})
+                self._send(200, {"antigravity": ag_models, "opencode": oc_models, "together": tj_models})
             except Exception as e:  # noqa: BLE001
                 self._send(502, {"error": str(e)})
         elif self.path == "/v1/config/antigravity-auth":
@@ -390,6 +433,15 @@ tick(); setInterval(tick, 1000);
             BridgeHandler._refresh_opencode_backend()
             sys.stderr.write(f"[bridge] OpenCode API key updated by admin ({key[:8]}...)\n")
             self._send(200, {"ok": True, "updated": True})
+        elif self.path == "/v1/config/together-key":
+            key = (body.get("api_key") or "").strip()
+            if not key:
+                self._error(400, "api_key required", "invalid_request_error")
+                return
+            BridgeHandler._save_together_key_file(key)
+            BridgeHandler._refresh_together_backend()
+            sys.stderr.write(f"[bridge] Together AI API key updated by admin ({key[:8]}...)\n")
+            self._send(200, {"ok": True, "updated": True})
         elif self.path == "/v1/config/antigravity-auth":
             import agy_auth  # noqa: E402
 
@@ -449,7 +501,8 @@ tick(); setInterval(tick, 1000);
 
     def _smol_answer_stream(self, messages, model):
         """Run the smolagents CodeAgent (SearXNG tool) as a subprocess and
-        stream its answer back in chunks. Used for OpenCode Go models.
+        stream its answer back in chunks. Used for OpenCode Go and Together AI
+        models (both are OpenAI-compatible + SearXNG-grounded).
 
         The agent gets the LAST user turn as its task PLUS the prior thread
         history as context (JSON in argv[3]) so it can answer questions like
@@ -461,6 +514,13 @@ tick(); setInterval(tick, 1000);
         if not question or not Path(py).exists() or not script.exists():
             yield "\n\n[agent unavailable — answer from model knowledge]"
             return
+        # provider endpoint for Together AI (OpenCode keeps its env defaults)
+        backend = self.backend_for(model)
+        base_url = ""
+        api_key = ""
+        if getattr(backend, "name", "") == "together":
+            base_url = backend.base_url
+            api_key = backend.api_key
         # prior history = all messages except the last user turn (the live question)
         prior = list(messages or [])
         for m in reversed(prior):
@@ -474,7 +534,7 @@ tick(); setInterval(tick, 1000);
         history_json = json.dumps(prior, ensure_ascii=False) if prior else ""
         try:
             proc = subprocess.run(
-                [py, str(script), question, "code", history_json],
+                [py, str(script), question, "code", history_json, base_url, api_key, model],
                 capture_output=True,
                 text=True,
                 timeout=300,

@@ -1510,9 +1510,6 @@ def pick_backend(prefer: str | None = None) -> object:
     return MockBackend()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Backend 6: OpenCode.ai Zen Go (OpenAI-compatible, e.g. deepseek-v4-flash)
-# ─────────────────────────────────────────────────────────────────────────────
 OPENCODE_BASE_URL = os.environ.get("OPENCODE_BASE_URL", "https://opencode.ai/zen/go/v1")
 OPENCODE_API_KEY = os.environ.get("OPENCODE_API_KEY", "")
 
@@ -1665,3 +1662,25 @@ class OpenCodeBackend:
                 text = delta.get("content")
                 if text:
                     yield text, None
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Backend 7: Together AI (OpenAI-compatible, e.g. Prism-ML/Ternary-Bonsai-27B)
+# ─────────────────────────────────────────────────────────────────────────────
+TOGETHER_BASE_URL = os.environ.get("TOGETHER_BASE_URL", "https://api.together.ai/v1")
+TOGETHER_API_KEY = os.environ.get("TOGETHER_API_KEY", "")
+
+
+class TogetherAIBackend(OpenCodeBackend):
+    """OpenAI-compatible endpoint at Together AI (Prism-ML/Ternary-Bonsai-27B
+    etc.). Same protocol as OpenCodeBackend; grounded via SearXNG through the
+    smolagents agent path."""
+
+    name = "together"
+
+    def __init__(self, base_url: str | None = None, api_key: str | None = None):
+        self.base_url = (base_url or TOGETHER_BASE_URL).rstrip("/")
+        self.api_key = api_key or TOGETHER_API_KEY
+
+    def describe(self) -> str:
+        return f"TogetherAIBackend ({self.base_url}) — OpenAI-compatible, SearXNG-grounded"
+
