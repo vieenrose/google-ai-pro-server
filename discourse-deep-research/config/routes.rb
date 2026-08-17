@@ -6,4 +6,6 @@ DiscourseGemini::Engine.routes.draw do
   # Admin panel link (Ember route redirects here via /full).
   get "/admin/plugins/antigravity-quota" => "quota#index"
   get "/admin/plugins/antigravity-quota/full" => "quota#index"
+  # Save plugin settings (OpenCode key / bridge token / bridge URL).
+  post "/admin/plugins/antigravity-quota/settings" => "quota#update_settings"
 end

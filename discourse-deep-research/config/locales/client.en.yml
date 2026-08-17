@@ -1,9 +1,9 @@
 en:
   discourse_gemini:
     quota:
-      title: "Antigravity Quota"
+      title: "Sloth AI"
   admin_js:
     admin:
       site_settings:
         categories:
-          discourse_gemini: "Discourse Gemini"
+          discourse_gemini: "Sloth AI"

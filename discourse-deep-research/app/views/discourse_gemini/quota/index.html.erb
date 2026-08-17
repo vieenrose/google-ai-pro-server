@@ -1,4 +1,4 @@
-<%- # Antigravity quota monitor — server-rendered, no asset pipeline. -%>
+<%- # Sloth AI — admin page: plugin settings + quota monitor (server-rendered). -%>
 <style>
   .agq-wrap { max-width: 900px; padding: 8px 0 24px; font-size: 14px; }
   .agq-wrap table { width: 100%; border-collapse: collapse; }
@@ -15,10 +15,52 @@
   .agq-warn { color: #c00; }
   .agq-sub { color: var(--primary-medium, #777); font-size: 13px; margin-bottom: 14px; }
   .agq-error { background: #fdecea; border: 1px solid #f5c6c6; color: #a33; padding: 12px; border-radius: 6px; }
+  .agq-saved { background: #e7f6ec; border: 1px solid #b5dfc4; color: #167b3a; padding: 10px 12px; border-radius: 6px; margin-bottom: 12px; }
+  .agq-box { border: 1px solid var(--primary-low, #ddd); border-radius: 8px; padding: 14px 16px; margin-bottom: 20px; }
+  .agq-box h3 { margin: 0 0 10px; font-size: 15px; }
+  .agq-box label { display: block; font-size: 13px; margin: 10px 0 4px; color: var(--primary-medium, #666); }
+  .agq-box input[type="text"], .agq-box input[type="password"] { width: 100%; max-width: 520px;
+    padding: 6px 8px; border: 1px solid var(--primary-low-mid, #bbb); border-radius: 4px;
+    font-family: monospace; font-size: 13px; background: var(--secondary, #fff); color: var(--primary, #222); }
+  .agq-box .hint { font-size: 12px; color: var(--primary-medium, #888); margin: 3px 0 0; }
+  .agq-box .btn { margin-top: 12px; }
+  .agq-box .masked { font-family: monospace; color: var(--primary-medium, #777); font-size: 12px; }
 </style>
 
 <div class="agq-wrap">
-  <h2>🧪 Antigravity 配額監視 / Quota Monitor</h2>
+  <h2>🦥 Sloth AI Plugin</h2>
+
+  <% if @save_error %>
+    <div class="agq-error">⚠️ 儲存設定失敗：<%= @save_error %></div>
+  <% elsif @saved %>
+    <div class="agq-saved">✅ 設定已儲存，已同步至 bridge（無需重啟）。</div>
+  <% end %>
+
+  <% if current_user&.admin? %>
+    <div class="agq-box">
+      <h3>⚙️ 設定 / Settings</h3>
+      <%= form_tag "/admin/plugins/antigravity-quota/settings", method: :post do %>
+        <label for="opencode_api_key">OpenCode Go API Key（deepseek / mimo）</label>
+        <% oc = @settings.find { |s| s[:setting].to_s == "gemini_opencode_api_key" }
+           oc_set = oc && oc[:value].present? %>
+        <input type="password" id="opencode_api_key" name="opencode_api_key"
+               value="" autocomplete="new-password"
+               placeholder="<%= oc_set ? "已設定 (#{oc[:value].to_s[0,10]}…)，留空則不變更" : "輸入 API key" %>">
+        <div class="hint">留空 = 保留目前的 key。儲存後 plugin 自動推送到 bridge，立即生效。</div>
+
+        <label for="bridge_token">Bridge Token</label>
+        <% bt = @settings.find { |s| s[:setting].to_s == "gemini_bridge_token" } %>
+        <input type="password" id="bridge_token" name="bridge_token" value="" autocomplete="new-password"
+               placeholder="<%= bt && bt[:value].present? ? "已設定，留空則不變更" : "輸入 bridge token" %>">
+
+        <label for="bridge_url">Bridge URL</label>
+        <input type="text" id="bridge_url" name="bridge_url" value=""
+               placeholder="<%= (@settings.find { |s| s[:setting].to_s == "gemini_bridge_url" }&.dig(:value) || "http://127.0.0.1:8787") %>">
+
+        <button class="btn btn-primary" type="submit">儲存設定</button>
+      <% end %>
+    </div>
+  <% end %>
 
   <% if @error %>
     <div class="agq-error">⚠️ 無法讀取配額：<%= @error %></div>

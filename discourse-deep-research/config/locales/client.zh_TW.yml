@@ -1,9 +1,9 @@
 zh_TW:
   discourse_gemini:
     quota:
-      title: "Antigravity 配額"
+      title: "Sloth AI 外掛"
   admin_js:
     admin:
       site_settings:
         categories:
-          discourse_gemini: "Discourse Gemini"
+          discourse_gemini: "Sloth AI"

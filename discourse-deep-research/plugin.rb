@@ -10,9 +10,9 @@
 # from the former "discourse-gemini" plugin so existing forum data and stored
 # settings survive the rename untouched.
 
-# name: discourse-deep-research
-# about: Deep Research for Discourse (@deep-research / /deep) powered by your Google AI Pro subscription
-# version: 0.2.0
+# name: Sloth AI Plugin
+# about: Sloth AI — forum AI bots (Google AI Pro via Antigravity + OpenCode Go deepseek/mimo), quota monitor, deep research
+# version: 0.3.0
 # authors: Luigi LIU
 # url: https://github.com/vieenrose/google-ai-pro-server
 
