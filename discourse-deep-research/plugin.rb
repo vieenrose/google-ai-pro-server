@@ -38,6 +38,22 @@ after_initialize do
 
   # When an admin changes the OpenCode Go API key site setting, push it to
   # the bridge immediately (the bridge persists it over its env var).
+  # Auto-sync when Discourse AI's model registry or secrets change — real
+  # time, plus a 5-minute scheduled job as safety net.
+  begin
+    [::LlmModel, ::AiSecret].each do |klass|
+      klass.class_eval do
+        after_commit :sloth_ai_providers_changed, on: %i[create update destroy]
+
+        def sloth_ai_providers_changed
+          ::Jobs.enqueue(:sync_sloth_providers, reason: "#{self.class.name} changed")
+        end
+      end
+    end
+  rescue StandardError => e
+    Rails.logger.warn("[discourse-deep-research] providers auto-sync hook failed: #{e.message}")
+  end
+
   on(:site_setting_changed) do |name, _old_val, current|
     case name
     when :gemini_opencode_api_key, :gemini_together_api_key
@@ -346,6 +362,25 @@ after_initialize do
 
     def self.chat_bot_username?(user)
       user.respond_to?(:username) && bot_config.key?(user.username)
+    end
+
+    # Build OpenAI-style message history for a chat-channel reply: the
+    # triggering chat message plus recent messages in the same channel/thread.
+    def self.build_chat_channel_messages(message, bot)
+      limit = SiteSetting.gemini_chat_history_posts.to_i.clamp(1, 30)
+      scope = ::Chat::Message.where(chat_channel_id: message.chat_channel_id)
+      scope = scope.where(thread_id: message.thread_id) if message.thread_id.present?
+      msgs = scope.where("id <= ?", message.id).order(id: :desc).limit(limit).to_a.reverse
+      out = []
+      msgs.each do |m|
+        role = m.user_id == bot.id || (m.user_id.to_i < 0 && chat_bot_username?(m.user)) ? "assistant" : "user"
+        content = m.message.to_s[0, 3000]
+        content = content.gsub(/<[^>]+>/, " ")
+        author = m.user&.username || "user"
+        prefix = role == "user" ? "#{author}: " : ""
+        out << { role: role, content: "#{prefix}#{content}" }
+      end
+      out
     end
 
     def self.post_as_bot(topic_id:, raw:, title: nil, username: "deep-research", reply_to_post_number: nil)

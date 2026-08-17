@@ -172,7 +172,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
             # skip self-referencing entries (bridge as the model's own URL)
             if "8787" in url or "127.0.0.1" in url or "172.17.0.1" in url:
                 continue
-            clean[model_id] = {"url": url, "api_key": key, "provider": cfg.get("provider", "open_ai")}
+            agent_type = cfg.get("agent_type") or ("tools" if "together.ai" in url else "code")
+            clean[model_id] = {
+                "url": url,
+                "api_key": key,
+                "provider": cfg.get("provider", "open_ai"),
+                "agent_type": agent_type,
+            }
         cls._save_providers_registry(clean)
         # reset cached backends so next call picks up the new key/url
         cls.opencode_backend = None
@@ -614,6 +620,12 @@ tick(); setInterval(tick, 1000);
         backend = self.backend_for(model)
         base_url = getattr(backend, "base_url", "") or ""
         api_key = getattr(backend, "api_key", "") or ""
+        # agent type: registry entries may specify "tools" (ToolCallingAgent —
+        # Together models emit prose, not code blocks); default "code".
+        agent_type = "code"
+        reg_cfg = BridgeHandler.providers_registry.get(model) if BridgeHandler.providers_registry else None
+        if reg_cfg:
+            agent_type = reg_cfg.get("agent_type", "code")
         # prior history = all messages except the last user turn (the live question)
         prior = list(messages or [])
         for m in reversed(prior):
@@ -627,7 +639,7 @@ tick(); setInterval(tick, 1000);
         history_json = json.dumps(prior, ensure_ascii=False) if prior else ""
         try:
             proc = subprocess.run(
-                [py, str(script), question, "code", history_json, base_url, api_key, model],
+                [py, str(script), question, agent_type, history_json, base_url, api_key, model],
                 capture_output=True,
                 text=True,
                 timeout=300,
