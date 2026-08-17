@@ -172,19 +172,27 @@ class BridgeHandler(BaseHTTPRequestHandler):
             })
         elif self.path == "/api/quota":
             try:
-                self._send(200, self.backend.quota())
+                gem = self.backend.quota()
+                oc = None
+                if BridgeHandler.opencode_backend is None:
+                    BridgeHandler.opencode_backend = OpenCodeBackend()
+                oc = BridgeHandler.opencode_backend.quota()
+                self._send(200, {"antigravity": gem, "opencode": oc})
             except Exception as e:  # noqa: BLE001
                 self._send(502, {"error": str(e)})
         elif self.path == "/quota" or self.path.startswith("/quota?"):
             try:
-                data = self.backend.quota()
+                gem = self.backend.quota()
+                if BridgeHandler.opencode_backend is None:
+                    BridgeHandler.opencode_backend = OpenCodeBackend()
+                oc = BridgeHandler.opencode_backend.quota()
             except Exception as e:  # noqa: BLE001
                 body = (f"<!doctype html><html><body style='font-family:sans-serif;padding:2em'>"
                         f"<h2>⚠️ 無法讀取配額</h2><p>{e}</p><meta http-equiv='refresh' content='60'>"
                         f"</body></html>").encode()
                 self._send_html(body)
                 return
-            self._send_html(self._quota_page(data))
+            self._send_html(self._quota_page(gem, oc))
         else:
             self._send(404, {"error": "not found"})
 
@@ -196,10 +204,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     @staticmethod
-    def _quota_page(data: dict) -> bytes:
+    def _quota_page(gem_data: dict, oc_data: dict | None = None) -> bytes:
         import html as _html
         rows = []
-        for m in data.get("models", []):
+        for m in gem_data.get("models", []):
             frac = float(m.get("remaining", 0))
             pct = frac * 100
             if frac > 0.5:
@@ -217,19 +225,43 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 f"<td class='reset' data-reset='{_html.escape(m.get('reset_time', ''))}'>—</td>"
                 "</tr>"
             )
-        fetched = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(data.get("fetched_at", time.time())))
-        rows_html = "\n".join(rows)
+        oc_rows = ""
+        if oc_data is not None:
+            for m in oc_data.get("models", []):
+                frac = float(m.get("remaining", 0))
+                pct = frac * 100
+                if frac > 0.5:
+                    color = "#16a34a"
+                elif frac > 0.1:
+                    color = "#ca8a04"
+                else:
+                    color = "#dc2626"
+                oc_rows += (
+                    "<tr>"
+                    f"<td>{_html.escape(m.get('name', ''))}<div class='key'>{_html.escape(m.get('key', ''))}</div></td>"
+                    "<td class='bar-cell'><div class='bar'><div class='fill' "
+                    f"style='width:{pct:.1f}%;background:{color}'></div></div>"
+                    f"<span class='pct'>{pct:.2f}%</span></td>"
+                    f"<td class='reset' data-reset='{_html.escape(m.get('reset_time', ''))}'>—</td>"
+                    "</tr>"
+                )
+            if oc_data.get("error"):
+                oc_rows += f"<tr><td colspan=3 class='key warn'>⚠️ {_html.escape(oc_data['error'])}</td></tr>"
+        fetched = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(gem_data.get("fetched_at", time.time())))
+        gem_rows = "\n".join(rows)
+        source = "fetchAvailableModels/quotaInfo" if not oc_data else "fetchAvailableModels/quotaInfo + OpenCode /usage"
         html = f"""<!doctype html>
 <html lang="zh-TW"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="60">
-<title>Antigravity 配額監視</title>
+<title>配額監視 (Antigravity + OpenCode)</title>
 <style>
  body {{ font-family: -apple-system, 'Segoe UI', 'Noto Sans TC', sans-serif; margin: 0;
         background: #0f172a; color: #e2e8f0; }}
  .wrap {{ max-width: 860px; margin: 0 auto; padding: 24px 16px; }}
  h1 {{ font-size: 20px; margin: 0 0 4px; }}
  .sub {{ color: #94a3b8; font-size: 13px; margin-bottom: 20px; }}
+ h2 {{ font-size: 15px; margin: 28px 0 8px; color: #7dd3fc; }}
  table {{ width: 100%; border-collapse: collapse; }}
  th {{ text-align: left; font-size: 12px; color: #94a3b8; padding: 8px;
       border-bottom: 1px solid #1e293b; }}
@@ -241,11 +273,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
  .reset {{ color: #94a3b8; font-variant-numeric: tabular-nums; font-size: 13px; }}
  .warn {{ color: #fca5a5; }}
 </style></head><body><div class="wrap">
-<h1>🧪 Antigravity 配額監視</h1>
-<div class="sub">每 60 秒自動更新 · 資料擷取於 {fetched}（本機時間）· 來源：fetchAvailableModels/quotaInfo</div>
+<h1>🧪 配額監視</h1>
+<div class="sub">每 60 秒自動更新 · 資料擷取於 {fetched}（本機時間）· 來源：{source}</div>
+<h2>Antigravity（Gemini 模型）</h2>
 <table><thead><tr><th>模型</th><th>剩餘額度</th><th>重設倒數</th></tr></thead><tbody>
-{rows_html}
-</tbody></table></div>
+{gem_rows}
+</tbody></table>
+<h2>OpenCode Go（deepseek-v4-pro / flash 等）</h2>
+<table><thead><tr><th>模型</th><th>剩餘額度</th><th>重設倒數</th></tr></thead><tbody>
+{oc_rows if oc_rows else "<tr><td colspan=3 class='key'>—</td></tr>"}
+</tbody></table>
 <script>
 function tick() {{
   document.querySelectorAll('td.reset').forEach(el => {{

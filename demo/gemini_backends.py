@@ -1538,6 +1538,48 @@ class OpenCodeBackend:
 
     UA = "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 
+    def _get(self, path: str, timeout: int = 180) -> dict:
+        req = urllib.request.Request(f"{self.base_url}{path}")
+        req.add_header("User-Agent", self.UA)
+        if self.api_key:
+            req.add_header("Authorization", f"Bearer {self.api_key}")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode(errors="replace"))
+
+    def quota(self) -> dict:
+        """OpenCode Go subscription usage (rolling/weekly/monthly percent + resets).
+
+        Mirrors what the OpenCode account page shows. Returns a dict shaped
+        like the Antigravity quota() so the bridge's quota page can render it:
+        {fetched_at, models: [{key, name, remaining, reset_time}],}
+        plus a top-level "opencode": {...} block with the raw usage.
+        """
+        now = time.time()
+        if getattr(self, "_quota_cache", None) and now - self._quota_cache["t"] < 60:
+            return self._quota_cache["data"]
+        try:
+            data = self._get("/usage", timeout=30)
+        except Exception as e:  # noqa: BLE001
+            return {"fetched_at": now, "error": str(e), "models": []}
+        usage = data.get("usage") or {}
+        models = []
+        for roll in ("rolling", "weekly", "monthly"):
+            u = usage.get(roll) or {}
+            pct = u.get("percent")
+            if pct is None:
+                continue
+            models.append({
+                "key": roll,
+                "name": {"rolling": "今日額度 (rolling)",
+                         "weekly": "本週額度 (weekly)",
+                         "monthly": "本月額度 (monthly)"}[roll],
+                "remaining": max(0.0, 1.0 - float(pct) / 100.0),
+                "reset_time": u.get("resetsAt", ""),
+            })
+        out = {"fetched_at": now, "models": models, "opencode": usage}
+        self._quota_cache = {"t": now, "data": out}
+        return out
+
     def _post(self, path: str, body: dict, timeout: int = 180) -> dict:
         req = urllib.request.Request(
             f"{self.base_url}{path}",
