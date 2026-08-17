@@ -144,22 +144,54 @@ after_initialize do
     # → "ai_gemini-3.7-flash" (the config still maps to the real model id).
     # If a model is already enabled under a shorter legacy name (e.g.
     # ai_gemini_image for gemini-3.1-flash-image), that name is reused.
-    def self.bot_username_for(model_id)
-      name = "ai_#{model_id}"
-      return name if valid_bot_username?(name)
+    #
+    # Conflict avoidance: if the stripped alias is already claimed by a
+    # DIFFERENT model (e.g. both gemini-3.7-flash and gemini-3.7-flash-tiered
+    # are enabled), the tier suffix is kept instead — gemini-3.7-flash →
+    # ai_gemini-3.7-flash, gemini-3.7-flash-tiered → ai_gemini-3.7-tiered.
+    #
+    # taken: hash of username → model_id for names already assigned in this
+    # save cycle (defaults to the current config).
+    def self.bot_username_for(model_id, taken: nil)
+      taken ||= bot_config
+      full = "ai_#{model_id}"
+      return full if valid_bot_username?(full) && !bot_name_conflict?(full, model_id, taken)
 
       # reuse an existing config mapping (legacy short names)
-      existing = bot_config.key(model_id)
+      existing = taken.key(model_id)
       return existing if existing && valid_bot_username?(existing)
 
       short = model_id.dup
       # drop trailing tier markers until the name fits
       short = short.sub(/-(tiered|thinking|preview|image)\z/, "") while short =~ /-(tiered|thinking|preview|image)\z/
       alias_name = "ai_#{short}"
-      return alias_name if valid_bot_username?(alias_name)
+      return alias_name if valid_bot_username?(alias_name) && !bot_name_conflict?(alias_name, model_id, taken)
+
+      # the alias is taken by another model (or still too long): keep the tier
+      # suffix and drop middle segments until the name fits.
+      segments = model_id.split("-")
+      if segments.last =~ /\A(tiered|thinking|preview|image)\z/
+        tier = segments.pop
+        head = segments.shift
+        keep = [head]
+        segments.each do |seg|
+          trial = (keep + [seg] + [tier]).join("-")
+          if ("ai_#{trial}").length <= SiteSetting.max_username_length
+            keep << seg
+          end
+        end
+        candidate = "ai_#{(keep + [tier]).join('-')}"
+        return candidate if valid_bot_username?(candidate) && !bot_name_conflict?(candidate, model_id, taken)
+      end
 
       # last resort: truncate to the max length
-      "ai_#{model_id}"[0, SiteSetting.max_username_length]
+      full[0, SiteSetting.max_username_length]
+    end
+
+    # True when +username+ is claimed by a different model id in +taken+.
+    def self.bot_name_conflict?(username, model_id, taken)
+      claimed = taken[username]
+      claimed.present? && claimed != model_id
     end
 
     # Pretty display name for a raw model id, e.g.

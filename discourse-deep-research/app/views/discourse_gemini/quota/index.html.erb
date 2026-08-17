@@ -86,6 +86,7 @@
       <div class="hint" style="margin-bottom:10px;">
         勾選 = 啟用（使用者可以在論壇 @ 該 bot 使用）；取消勾選 = 停用（不再回應，且無貼文的 bot 帳號會被刪除）。
         帳號命名已統一為 <code>ai_{model}</code>（例如 gemini-3.6-flash → ai_gemini-3.6-flash）。
+        若同名裸版與 tiered 版同時啟用，tiered 版會保留後綴區分（gemini-3.7-flash → ai_gemini-3.7-flash，gemini-3.7-flash-tiered → ai_gemini-3.7-tiered）。
       </div>
       <%= form_tag "/admin/plugins/sloth-ai/bots", method: :post do %>
         <% config = DiscourseGemini.bot_config

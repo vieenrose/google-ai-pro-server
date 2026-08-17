@@ -215,11 +215,16 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 gem = self.backend.quota()
                 BridgeHandler._refresh_opencode_backend()
                 oc_models = BridgeHandler.opencode_backend.list_models()
-                ag_models = [
-                    {"id": m.get("key"), "name": m.get("name") or m.get("key")}
-                    for m in (gem.get("models") or [])
-                    if m.get("key") and not str(m.get("key")).startswith(("chat_", "tab_"))
-                ]
+                ag_models = []
+                for m in (gem.get("models") or []):
+                    key = m.get("key")
+                    if not key or str(key).startswith(("chat_", "tab_")):
+                        continue
+                    # Google's quota displayName is unreliable (e.g.
+                    # gemini-2.5-flash labeled "Gemini 3.1 Flash Lite",
+                    # gemini-3.5-flash-low labeled "(Medium)"). Send the raw
+                    # id; the plugin normalizes it into a clean display name.
+                    ag_models.append({"id": key, "name": key})
                 self._send(200, {"antigravity": ag_models, "opencode": oc_models})
             except Exception as e:  # noqa: BLE001
                 self._send(502, {"error": str(e)})
