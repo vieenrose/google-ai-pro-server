@@ -38,6 +38,63 @@
 
   <% if @admin_page && current_user&.admin? %>
     <div class="agq-box">
+      <h3>🔑 Google AI Pro 訂閱狀態 / Auth Status</h3>
+      <% if @auth_status %>
+        <% st = @auth_status; acc = st["account"] || {}
+           tok = st["token"] || {}; ref = st["refresh"] || {} %>
+        <table style="margin-bottom:10px;">
+          <tbody>
+            <tr><td style="width:180px;">帳號</td><td><%= acc["email"] || "—" %>（<%= acc["name"] || "?" %>）</td></tr>
+            <tr><td>認證狀態</td>
+              <td>
+                <% if st["ok"] %>
+                  <span style="color:#16a34a;">✅ 正常（自動續期中）</span>
+                <% elsif st["configured"] %>
+                  <span style="color:#ca8a04;">⚠️ 需要重新認證</span>
+                <% else %>
+                  <span style="color:#dc2626;">❌ 尚未設定</span>
+                <% end %>
+              </td></tr>
+            <tr><td>Token 到期</td><td class="agq-key"><%= tok["fresh_expiry"] ? "#{tok["fresh_expiry"][0,19]}（#{tok["expires_in_s"].to_i / 60} 分鐘後）" : "—" %></td></tr>
+            <tr><td>檔案內舊 token</td><td class="agq-key"><%= tok["expiry"] ? tok["expiry"][0,19] : "—" %> <%= tok["stored_file_expired"] ? "（已過期，啟動時自動續期）" : "" %></td></tr>
+            <tr><td>Refresh token</td>
+              <td><% if ref["ok"] %><span style="color:#16a34a;">✅ 有效</span><% elsif ref["ok"] == false %><span style="color:#dc2626;">❌ 失效：<%= ref["error"] %></span><% else %>—<% end %></td></tr>
+            <tr><td>Client secret</td><td><%= st["client_secret_set"] ? "✅ 已設定" : "❌ 未設定（無法續期）" %></td></tr>
+          </tbody>
+        </table>
+      <% else %>
+        <div class="agq-error">⚠️ 無法讀取認證狀態</div>
+      <% end %>
+
+      <% if @reauth_error %>
+        <div class="agq-error">⚠️ <%= @reauth_error %></div>
+      <% end %>
+      <% if @reauth_ok %>
+        <div class="agq-saved"><%= @reauth_ok %></div>
+      <% end %>
+
+      <% if @reauth_url.present? %>
+        <div style="margin:10px 0;padding:10px;background:#f0f7ff;border:1px solid #bcd9f5;border-radius:6px;">
+          <div style="font-weight:600;margin-bottom:6px;">步驟 1/2：用你的 Google 帳號開啟以下連結並授權</div>
+          <a href="<%= @reauth_url %>" target="_blank" style="word-break:break-all;font-family:monospace;font-size:12px;"><%= @reauth_url %></a>
+          <div class="hint" style="margin-top:6px;">授權後會被導向 antigravity.google/oauth-callback?code=…，複製整個網址或 code 貼到下方。</div>
+        </div>
+        <%= form_tag "/admin/plugins/sloth-ai/reauth/exchange", method: :post do %>
+          <input type="hidden" name="verifier" value="<%= @reauth_verifier %>">
+          <label for="reauth_code">步驟 2/2：貼上 Google 回傳的 code</label>
+          <input type="text" id="reauth_code" name="code" placeholder="4/0A… 或完整 callback 網址">
+          <%= submit_tag "完成認證", class: "btn btn-primary", style: "margin-top:8px" %>
+        <% end %>
+      <% else %>
+        <%= form_tag "/admin/plugins/sloth-ai/reauth", method: :post do %>
+          <%= submit_tag "重新認證 Google AI Pro", class: "btn btn-default", style: "margin-top:4px" %>
+        <% end %>
+      <% end %>
+    </div>
+  <% end %>
+
+  <% if @admin_page && current_user&.admin? %>
+    <div class="agq-box">
       <h3>⚙️ 設定 / Settings</h3>
       <%= form_tag "/admin/plugins/sloth-ai/settings", method: :post do %>
         <label for="opencode_api_key">OpenCode Go API Key（deepseek / mimo）</label>

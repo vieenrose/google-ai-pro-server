@@ -237,6 +237,13 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send(200, {"antigravity": ag_models, "opencode": oc_models})
             except Exception as e:  # noqa: BLE001
                 self._send(502, {"error": str(e)})
+        elif self.path == "/v1/config/antigravity-auth":
+            try:
+                import agy_auth  # noqa: E402
+
+                self._send(200, agy_auth.status())
+            except Exception as e:  # noqa: BLE001
+                self._send(502, {"error": str(e)})
         elif self.path == "/quota" or self.path.startswith("/quota?"):
             try:
                 gem = self.backend.quota()
@@ -383,6 +390,23 @@ tick(); setInterval(tick, 1000);
             BridgeHandler._refresh_opencode_backend()
             sys.stderr.write(f"[bridge] OpenCode API key updated by admin ({key[:8]}...)\n")
             self._send(200, {"ok": True, "updated": True})
+        elif self.path == "/v1/config/antigravity-auth":
+            import agy_auth  # noqa: E402
+
+            self._send(200, agy_auth.status())
+        elif self.path == "/v1/config/antigravity-auth/url":
+            import agy_auth  # noqa: E402
+
+            self._send(200, agy_auth.start_reauth())
+        elif self.path == "/v1/config/antigravity-auth/exchange":
+            import agy_auth  # noqa: E402
+
+            code = (body.get("code") or "").strip()
+            verifier = (body.get("verifier") or "").strip() or None
+            if not code:
+                self._error(400, "code required", "invalid_request_error")
+                return
+            self._send(200, agy_auth.complete_reauth(code, verifier))
         else:
             self._send(404, {"error": "not found"})
 

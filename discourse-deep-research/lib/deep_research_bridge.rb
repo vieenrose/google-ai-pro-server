@@ -46,6 +46,21 @@ class GeminiBridge
     get("/api/models")
   end
 
+  # GET /v1/config/antigravity-auth → auth/subscription status
+  def antigravity_auth_status
+    get("/v1/config/antigravity-auth")
+  end
+
+  # POST /v1/config/antigravity-auth/url → { auth_url:, verifier: }
+  def antigravity_auth_url
+    post("/v1/config/antigravity-auth/url", {})
+  end
+
+  # POST /v1/config/antigravity-auth/exchange → { ok:, account:, error: }
+  def antigravity_auth_exchange(code, verifier)
+    post("/v1/config/antigravity-auth/exchange", { code: code, verifier: verifier })
+  end
+
   # GET /api/quota → { fetched_at:, models: [{key, name, remaining, reset_time}] }
   def quota
     get("/api/quota")

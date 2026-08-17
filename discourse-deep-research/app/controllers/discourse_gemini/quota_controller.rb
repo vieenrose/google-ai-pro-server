@@ -30,9 +30,14 @@ module DiscourseGemini
       @quota = GeminiBridge.new.quota
       @models = GeminiBridge.new.models
       @error = nil
+      @auth_status = @admin_page ? GeminiBridge.new.antigravity_auth_status : nil
       @settings = @admin_page && current_user&.admin? ? plugin_settings : []
       @saved = flash[:sloth_saved].present?
       @save_error = flash[:sloth_error]
+      @reauth_url = flash[:sloth_reauth_url]
+      @reauth_verifier = flash[:sloth_reauth_verifier]
+      @reauth_ok = flash[:sloth_reauth_ok]
+      @reauth_error = flash[:sloth_reauth_error]
     rescue StandardError => e
       Rails.logger.error("[sloth-debug] index error: #{e.class}: #{e.message}")
       Rails.logger.error(e.backtrace.first(6).join(" | "))
@@ -68,6 +73,44 @@ module DiscourseGemini
       flash[:sloth_saved] = true
     rescue StandardError => e
       flash[:sloth_error] = e.message
+    ensure
+      redirect_to "/admin/plugins/sloth-ai"
+    end
+
+    # POST /admin/plugins/sloth-ai/reauth — start Google AI Pro re-auth
+    # (returns the Google sign-in URL + verifier for the next step).
+    def reauth_url
+      raise Discourse::InvalidAccess unless current_user&.admin?
+
+      data = GeminiBridge.new.antigravity_auth_url
+      if data["auth_url"].present?
+        flash[:sloth_reauth_url] = data["auth_url"]
+        flash[:sloth_reauth_verifier] = data["verifier"].to_s
+        flash[:sloth_reauth_ok] = nil
+      else
+        flash[:sloth_reauth_error] = data["error"] || "無法取得認證連結"
+      end
+    ensure
+      redirect_to "/admin/plugins/sloth-ai"
+    end
+
+    # POST /admin/plugins/sloth-ai/reauth/exchange — submit the Google
+    # callback code to finish re-auth.
+    def reauth_exchange
+      raise Discourse::InvalidAccess unless current_user&.admin?
+
+      code = params[:code].to_s.strip
+      verifier = params[:verifier].to_s.strip
+      if code.present?
+        result = GeminiBridge.new.antigravity_auth_exchange(code, verifier)
+        if result["ok"]
+          flash[:sloth_reauth_ok] = "✅ 重新認證成功#{result["account"] ? "（#{result["account"]}）" : ""}。"
+        else
+          flash[:sloth_reauth_error] = result["error"] || "交換失敗"
+        end
+      else
+        flash[:sloth_reauth_error] = "請貼上 Google 回傳的 code"
+      end
     ensure
       redirect_to "/admin/plugins/sloth-ai"
     end

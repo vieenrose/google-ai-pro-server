@@ -10,6 +10,9 @@ DiscourseGemini::Engine.routes.draw do
   get "/admin/plugins/sloth-ai/full" => "quota#index"
   # Save plugin settings (OpenCode key / bridge token / bridge URL).
   post "/admin/plugins/sloth-ai/settings" => "quota#update_settings"
+  # Google AI Pro re-auth flow.
+  post "/admin/plugins/sloth-ai/reauth" => "quota#reauth_url"
+  post "/admin/plugins/sloth-ai/reauth/exchange" => "quota#reauth_exchange"
   # Create/rename bot users for the checked models.
   post "/admin/plugins/sloth-ai/bots" => "quota#create_bots"
 end
