@@ -32,20 +32,9 @@ after_initialize do
     mount DiscourseGemini::Engine, at: "/"
   end
 
-  # Hide all Sloth AI plugin settings from the native Settings page
-  # (admin/site_settings/category/discourse_gemini would otherwise auto-render
-  # them). The plugin's own admin page (/admin/plugins/sloth-ai) is the single
-  # place to manage them. Settings still work via SiteSetting.* accessors and
-  # keep their defaults from settings.yml.
-  register_modifier(:hidden_site_settings) do |hidden|
-    hidden + %i[
-      gemini_enabled gemini_bridge_url gemini_bridge_token gemini_opencode_api_key
-      gemini_allowed_groups gemini_bot_username gemini_model
-      gemini_daily_limit_per_user gemini_bot_models gemini_chat_enabled
-      gemini_chat_history_posts gemini_deep_research_enabled
-      gemini_deep_research_max_questions
-    ]
-  end
+  # Sloth AI settings are exposed in the native admin page too
+  # (admin → Settings → Plugins → Sloth AI) alongside the plugin's own
+  # admin page (/admin/plugins/sloth-ai).
 
   # When an admin changes the OpenCode Go API key site setting, push it to
   # the bridge immediately (the bridge persists it over its env var).
@@ -428,6 +417,26 @@ after_initialize do
         user = User.find_by(username: username)
       end
       user
+    end
+
+    # Group quota models that share the same token pool (same remaining
+    # fraction + same reset time). Returns [{names, keys, remaining,
+    # reset_time}] so the monitor can show one row per pool.
+    def self.group_quota_models(models)
+      groups = {}
+      (models || []).each do |m|
+        frac = m["remaining"].to_f
+        reset = m["reset_time"].to_s
+        key = [frac.round(4), reset]
+        groups[key] ||= { remaining: frac, reset_time: reset, names: [], keys: [] }
+        groups[key][:names] << (m["name"].presence || m["key"])
+        groups[key][:keys] << m["key"]
+      end
+      groups.values.map do |g|
+        g[:names].uniq!
+        g[:keys].uniq!
+        g
+      end
     end
   end
 

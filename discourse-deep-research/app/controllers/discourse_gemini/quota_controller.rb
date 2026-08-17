@@ -24,13 +24,18 @@ module DiscourseGemini
     ].freeze
 
     def index
+      # /admin/plugins/sloth-ai (and /full) = admin page with settings + bot
+      # management; /sloth-ai = public quota monitor for everyone.
+      @admin_page = request.path.start_with?("/admin/")
       @quota = GeminiBridge.new.quota
       @models = GeminiBridge.new.models
       @error = nil
-      @settings = current_user && current_user.admin? ? plugin_settings : []
+      @settings = @admin_page && current_user&.admin? ? plugin_settings : []
       @saved = flash[:sloth_saved].present?
       @save_error = flash[:sloth_error]
     rescue StandardError => e
+      Rails.logger.error("[sloth-debug] index error: #{e.class}: #{e.message}")
+      Rails.logger.error(e.backtrace.first(6).join(" | "))
       @quota = nil
       @error = e.message
     end

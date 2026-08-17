@@ -28,7 +28,7 @@
 </style>
 
 <div class="agq-wrap">
-  <h2>🦥 Sloth AI Plugin</h2>
+  <h2><%= @admin_page ? "🦥 Sloth AI 管理 / Admin" : "🎫 AI Token 額度 / Quota Monitor" %></h2>
 
   <% if @save_error %>
     <div class="agq-error">⚠️ 儲存設定失敗：<%= @save_error %></div>
@@ -36,7 +36,7 @@
     <div class="agq-saved">✅ 設定已儲存，已同步至 bridge（無需重啟）。</div>
   <% end %>
 
-  <% if current_user&.admin? %>
+  <% if @admin_page && current_user&.admin? %>
     <div class="agq-box">
       <h3>⚙️ 設定 / Settings</h3>
       <%= form_tag "/admin/plugins/sloth-ai/settings", method: :post do %>
@@ -87,7 +87,7 @@
     </div>
   <% end %>
 
-  <% if current_user&.admin? && @models %>
+  <% if @admin_page && current_user&.admin? && @models %>
     <div class="agq-box">
       <h3>🤖 模型啟用管理 / Enable Models</h3>
       <div class="hint" style="margin-bottom:10px;">
@@ -148,19 +148,20 @@
     <table>
       <thead><tr><th>模型</th><th>剩餘額度</th><th>重設倒數</th></tr></thead>
       <tbody>
-      <% @quota["models"].each do |m| %>
-        <% frac = m["remaining"].to_f; pct = frac * 100.0
-           color = frac > 0.5 ? "#16a34a" : (frac > 0.1 ? "#ca8a04" : "#dc2626") %>
-        <tr>
+      <% DiscourseGemini.group_quota_models(@quota["models"]).each do |g| %>
+        <% frac = g[:remaining].to_f; pct = frac * 100.0
+           color = frac > 0.5 ? "#16a34a" : (frac > 0.1 ? "#ca8a04" : "#dc2626")
+           title = g[:names].join(" / ") %>
+        <tr title="<%= g[:keys].join('、') %>">
           <td>
-            <%= m["name"] %>
-            <div class="agq-key"><%= m["key"] %></div>
+            <%= title %>
+            <div class="agq-key"><%= g[:keys].join(" · ") %></div>
           </td>
           <td>
             <div class="agq-bar"><div class="agq-fill" style="width:<%= pct.round(1) %>%;background:<%= color %>"></div></div>
             <span class="agq-pct"><%= format("%.2f", pct) %>%</span>
           </td>
-          <td class="agq-reset" data-reset="<%= m["reset_time"] %>">—</td>
+          <td class="agq-reset" data-reset="<%= g[:reset_time] %>">—</td>
         </tr>
       <% end %>
       </tbody>
@@ -190,19 +191,19 @@
     <table>
       <thead><tr><th>方案時間窗</th><th>剩餘額度</th><th>重設倒數</th></tr></thead>
       <tbody>
-      <% @quota["opencode"]["models"].each do |m| %>
-        <% frac = m["remaining"].to_f; pct = frac * 100.0
+      <% DiscourseGemini.group_quota_models(@quota["opencode"]["models"]).each do |g| %>
+        <% frac = g[:remaining].to_f; pct = frac * 100.0
            color = frac > 0.5 ? "#16a34a" : (frac > 0.1 ? "#ca8a04" : "#dc2626") %>
-        <tr>
+        <tr title="<%= g[:keys].join('、') %>">
           <td>
-            <%= m["name"] %>
-            <div class="agq-key"><%= m["key"] %></div>
+            <%= g[:names].join(" / ") %>
+            <div class="agq-key"><%= g[:keys].join(" · ") %></div>
           </td>
           <td>
             <div class="agq-bar"><div class="agq-fill" style="width:<%= pct.round(1) %>%;background:<%= color %>"></div></div>
             <span class="agq-pct"><%= format("%.2f", pct) %>%</span>
           </td>
-          <td class="agq-reset" data-reset="<%= m["reset_time"] %>">—</td>
+          <td class="agq-reset" data-reset="<%= g[:reset_time] %>">—</td>
         </tr>
       <% end %>
       </tbody>
