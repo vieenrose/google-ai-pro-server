@@ -62,10 +62,6 @@
           <input type="text" id="model" name="model" value=""
                  placeholder="<%= @settings.find { |s| s[:setting].to_s == "gemini_model" }&.dig(:value) || "gemini-3.5-flash" %>">
 
-          <label for="bot_models">Bot 模型對應（JSON）— ai_username → model</label>
-          <textarea id="bot_models" name="bot_models" rows="5" style="width:100%;max-width:520px;font-family:monospace;font-size:12px;"><%= @settings.find { |s| s[:setting].to_s == "gemini_bot_models" }&.dig(:value) %></textarea>
-          <div class="hint">格式：{"ai_gemini_3_6_flash": "gemini-3.6-flash", "ai_deepseek_v4_flash": "deepseek-v4-flash", "ai_mimo_v2_5": "mimo-v2.5"}</div>
-
           <label for="daily_limit">每用戶每日呼叫上限</label>
           <input type="number" id="daily_limit" name="daily_limit" value=""
                  placeholder="<%= @settings.find { |s| s[:setting].to_s == "gemini_daily_limit_per_user" }&.dig(:value) %>">
@@ -80,6 +76,52 @@
         </div>
 
         <%= submit_tag "全部儲存", class: "btn btn-primary", style: "margin-top:14px" %>
+      <% end %>
+    </div>
+  <% end %>
+
+  <% if current_user&.admin? && @models %>
+    <div class="agq-box">
+      <h3>🤖 模型啟用管理 / Enable Models</h3>
+      <div class="hint" style="margin-bottom:10px;">
+        勾選 = 啟用（使用者可以在論壇 @ 該 bot 使用）；取消勾選 = 停用（不再回應，且無貼文的 bot 帳號會被刪除）。
+        帳號命名已統一為 <code>ai_{model}</code>（例如 gemini-3.6-flash → ai_gemini-3.6-flash）。
+      </div>
+      <%= form_tag "/admin/plugins/sloth-ai/bots", method: :post do %>
+        <% config = DiscourseGemini.bot_config
+           used = config.values
+           ag_ids = (@models["antigravity"] || []).map { |m| m["id"] }
+           oc_ids = (@models["opencode"] || []).map { |m| m["id"] }
+           # include current-config models that the quota list may not expose
+           # (e.g. plain gemini-3.6-flash vs tiered variants)
+           ag_extra = (used - ag_ids - oc_ids).map { |i| { "id" => i, "name" => i } }
+           ag_all = ag_extra + (@models["antigravity"] || []) %>
+        <div style="font-weight:600;font-size:13px;color:var(--primary-medium,#777);margin:6px 0 4px;">Google AI Pro（Antigravity）</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 12px;">
+          <% ag_all.each do |m| %>
+            <% id = m["id"]; name = m["name"] || id
+               bot = "ai_#{id}"
+               enabled = config.key?(bot) || used.include?(id)
+               too_long = !DiscourseGemini.valid_bot_username?(bot) %>
+            <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:2px 0;cursor:pointer;">
+              <input type="checkbox" name="model[]" value="<%= id %>" <%= enabled ? "checked" : "" %> <%= too_long ? "disabled title=\"帳號名稱超過 #{SiteSetting.max_username_length} 字上限\"" : "" %>>
+              <span><%= name %></span>
+            </label>
+          <% end %>
+        </div>
+        <div style="font-weight:600;font-size:13px;color:var(--primary-medium,#777);margin:10px 0 4px;">OpenCode Go（deepseek / mimo）</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:4px 12px;">
+          <% (@models["opencode"] || []).each do |m| %>
+            <% id = m["id"]; bot = "ai_#{id}"
+               enabled = config.key?(bot) || used.include?(id)
+               too_long = !DiscourseGemini.valid_bot_username?(bot) %>
+            <label style="display:flex;gap:8px;align-items:center;font-size:13px;margin:2px 0;cursor:pointer;">
+              <input type="checkbox" name="model[]" value="<%= id %>" <%= enabled ? "checked" : "" %> <%= too_long ? "disabled title=\"帳號名稱超過 #{SiteSetting.max_username_length} 字上限\"" : "" %>>
+              <span><%= id %></span>
+            </label>
+          <% end %>
+        </div>
+        <%= submit_tag "儲存啟用設定", class: "btn btn-primary", style: "margin-top:14px" %>
       <% end %>
     </div>
   <% end %>

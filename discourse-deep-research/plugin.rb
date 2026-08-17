@@ -136,25 +136,49 @@ after_initialize do
       bot_config.key?(user.username)
     end
 
+    # Bot username for a native model id: ai_ + model name, e.g.
+    # "gemini-3.6-flash" → "ai_gemini-3.6-flash".
+    def self.bot_username_for(model_id)
+      "ai_#{model_id}"
+    end
+
+    def self.valid_bot_username?(username)
+      UsernameValidator.new(username).valid_format?
+    end
+
+    # Find the existing bot user mapped to this model (any naming) so we can
+    # rename it to the current ai_<model> convention.
+    def self.bot_user_for_model(model_id)
+      config = bot_config
+      name = config.key(model_id) # old naming, e.g. ai_gemini_3_6_flash
+      return User.find_by(username: name) if name
+      User.find_by(username: bot_username_for(model_id))
+    end
+
+    def self.create_bot_user!(username)
+      user = nil
+      User.transaction do
+        user =
+          User.create!(
+            username: username,
+            name: username.titleize,
+            email: "#{username}@discourse-gemini.invalid",
+            active: true,
+            approved: true,
+            trust_level: TrustLevel.levels[:leader],
+          )
+        user.activate
+      end
+      user
+    rescue ActiveRecord::RecordInvalid, PG::UniqueViolation
+      # raced with another boot — fine
+      User.find_by(username: username)
+    end
+
     def self.ensure_chat_bots!
       bot_config.each_key do |username|
         next if User.find_by(username: username).present?
-        begin
-          User.transaction do
-            user =
-              User.create!(
-                username: username,
-                name: username.titleize,
-                email: "#{username}@discourse-gemini.invalid",
-                active: true,
-                approved: true,
-                trust_level: TrustLevel.levels[:leader],
-              )
-            user.activate
-          end
-        rescue ActiveRecord::RecordInvalid, PG::UniqueViolation
-          # raced with another boot — fine
-        end
+        create_bot_user!(username)
       end
     end
 

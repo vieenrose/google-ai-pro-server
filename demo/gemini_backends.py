@@ -1580,6 +1580,23 @@ class OpenCodeBackend:
         self._quota_cache = {"t": now, "data": out}
         return out
 
+    def list_models(self) -> list[dict]:
+        """OpenCode Go models relevant to the forum bots (deepseek/mimo).
+
+        Returns [{id, family}] — used by the Sloth AI admin page to offer
+        bot creation for every usable OpenCode model.
+        """
+        try:
+            data = self._get("/models", timeout=30)
+        except Exception:  # noqa: BLE001
+            return []
+        ids = [m.get("id", "") for m in (data.get("data") or [])]
+        return [
+            {"id": i, "family": i.split("-")[0] if "-" in i else i}
+            for i in ids
+            if i.startswith(("deepseek", "mimo"))
+        ]
+
     def _post(self, path: str, body: dict, timeout: int = 180) -> dict:
         req = urllib.request.Request(
             f"{self.base_url}{path}",

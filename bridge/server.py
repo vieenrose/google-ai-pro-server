@@ -210,6 +210,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 self._send(200, merged)
             except Exception as e:  # noqa: BLE001
                 self._send(502, {"error": str(e)})
+        elif self.path == "/api/models":
+            try:
+                gem = self.backend.quota()
+                BridgeHandler._refresh_opencode_backend()
+                oc_models = BridgeHandler.opencode_backend.list_models()
+                ag_models = [
+                    {"id": m.get("key"), "name": m.get("name") or m.get("key")}
+                    for m in (gem.get("models") or [])
+                    if m.get("key") and not str(m.get("key")).startswith(("chat_", "tab_"))
+                ]
+                self._send(200, {"antigravity": ag_models, "opencode": oc_models})
+            except Exception as e:  # noqa: BLE001
+                self._send(502, {"error": str(e)})
         elif self.path == "/quota" or self.path.startswith("/quota?"):
             try:
                 gem = self.backend.quota()

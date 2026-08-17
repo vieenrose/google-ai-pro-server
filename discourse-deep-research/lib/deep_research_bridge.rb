@@ -41,6 +41,11 @@ class GeminiBridge
     post("/v1/config/opencode-key", { api_key: api_key.to_s.strip })
   end
 
+  # GET /api/models → { antigravity: [{id,name}], opencode: [{id,family}] }
+  def models
+    get("/api/models")
+  end
+
   # GET /api/quota → { fetched_at:, models: [{key, name, remaining, reset_time}] }
   def quota
     get("/api/quota")
