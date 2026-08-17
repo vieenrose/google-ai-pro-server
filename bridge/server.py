@@ -215,10 +215,19 @@ class BridgeHandler(BaseHTTPRequestHandler):
                 gem = self.backend.quota()
                 BridgeHandler._refresh_opencode_backend()
                 oc_models = BridgeHandler.opencode_backend.list_models()
+                # models Google marks deprecated (e.g. gemini-3.1-pro-high →
+                # gemini-pro-agent) fail with HTTP 400 — hide them from the
+                # enable list so admins don't create dead bots.
+                raw = self.backend._post("fetchAvailableModels", {"project": self.backend._project()})
+                deprecated = set((raw.get("deprecatedModelIds") or {}).keys())
                 ag_models = []
                 for m in (gem.get("models") or []):
                     key = m.get("key")
-                    if not key or str(key).startswith(("chat_", "tab_")):
+                    if not key or str(key).startswith(("chat_", "tab_")) or key in deprecated:
+                        continue
+                    # Gemini 2.x (2.5 flash/pro…) are too old to be useful —
+                    # mask them from the enable list.
+                    if str(key).startswith("gemini-2"):
                         continue
                     # Google's quota displayName is unreliable (e.g.
                     # gemini-2.5-flash labeled "Gemini 3.1 Flash Lite",

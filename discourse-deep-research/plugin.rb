@@ -479,7 +479,7 @@ after_initialize do
     next unless SiteSetting.gemini_chat_enabled
     next if post.custom_fields["gemini_chat_reply_enqueued"].present?
 
-    mentioned = raw.scan(/@([a-zA-Z0-9_\-]+)/).flatten.uniq
+    mentioned = raw.scan(/@([a-zA-Z0-9_\-\.]+)/).flatten.uniq
     mentioned.each do |username|
       model = DiscourseGemini.bot_model(username)
       next if model.blank?

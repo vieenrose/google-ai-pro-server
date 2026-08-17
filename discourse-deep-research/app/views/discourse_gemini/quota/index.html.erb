@@ -59,8 +59,15 @@
 
         <div style="margin-top:18px;border-top:1px solid var(--primary-low, #ddd);padding-top:12px;">
           <label for="model">預設模型（chat / deep research）</label>
-          <input type="text" id="model" name="model" value=""
-                 placeholder="<%= @settings.find { |s| s[:setting].to_s == "gemini_model" }&.dig(:value) || "gemini-3.5-flash" %>">
+          <% current_model = @settings.find { |s| s[:setting].to_s == "gemini_model" }&.dig(:value).to_s
+             current_model = "gemini-3.5-flash" if current_model.blank?
+             opts = ([{"id" => current_model, "name" => current_model}] + (@models["antigravity"] || []) + (@models["opencode"] || [])).uniq { |m| m["id"] } %>
+          <select id="model" name="model" style="width:100%;max-width:520px;padding:6px 8px;border:1px solid var(--primary-low-mid,#bbb);border-radius:4px;font-size:13px;background:var(--secondary,#fff);color:var(--primary,#222);">
+            <% opts.each do |m| %>
+              <option value="<%= m["id"] %>" <%= m["id"] == current_model ? "selected" : "" %>><%= DiscourseGemini.normalize_model_name(m["name"] || m["id"]) %>（<%= m["id"] %>）</option>
+            <% end %>
+          </select>
+          <div class="hint">deep research 與未指定模型的呼叫使用此模型。</div>
 
           <label for="daily_limit">每用戶每日呼叫上限</label>
           <input type="number" id="daily_limit" name="daily_limit" value=""
