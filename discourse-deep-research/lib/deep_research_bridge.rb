@@ -35,6 +35,12 @@ class GeminiBridge
     false
   end
 
+  # POST /v1/config/opencode-key → { ok:, updated: } — pushes the admin-set
+  # OpenCode Go API key to the bridge (persisted there, overrides env).
+  def push_opencode_key(api_key)
+    post("/v1/config/opencode-key", { api_key: api_key.to_s.strip })
+  end
+
   # GET /api/quota → { fetched_at:, models: [{key, name, remaining, reset_time}] }
   def quota
     get("/api/quota")

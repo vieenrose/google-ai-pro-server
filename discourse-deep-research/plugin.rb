@@ -32,6 +32,20 @@ after_initialize do
     mount DiscourseGemini::Engine, at: "/"
   end
 
+  # When an admin changes the OpenCode Go API key site setting, push it to
+  # the bridge immediately (the bridge persists it over its env var).
+  on(:site_setting_changed) do |name, _old_val, current|
+    next unless name == :gemini_opencode_api_key
+    key = current.to_s
+    if key.present?
+      begin
+        GeminiBridge.new.push_opencode_key(key)
+      rescue StandardError => e
+        Rails.logger.warn("[discourse-deep-research] push_opencode_key failed: #{e.message}")
+      end
+    end
+  end
+
   # load jobs now that Jobs::Base exists
   Dir["#{__dir__}/jobs/**/*.rb"].each { |f| load f }
   # ── bot user ──────────────────────────────────────────────────────────────

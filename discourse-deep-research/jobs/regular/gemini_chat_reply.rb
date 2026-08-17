@@ -48,6 +48,15 @@ module ::Jobs
       ensure
         raw = buffer.presence || I18n.t("discourse_gemini.chat_empty")
         PostRevisor.new(bot_post).revise!(bot, raw: raw, skip_validations: true)
+        # Force a final rebake: mid-stream flushes may have left the post's
+        # cooked from a partial buffer (unbalanced ** markers etc.), so the
+        # stored cooked can silently disagree with the final raw. A rebake
+        # guarantees the rendered output always matches the final text.
+        begin
+          bot_post.rebake!
+        rescue StandardError
+          nil
+        end
       end
     end
   end

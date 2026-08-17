@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -98,7 +99,7 @@ def web_search(query: str) -> str:
     return "\n".join(lines)
 
 
-def run(question: str, model_id: str = "deepseek-v4-flash", agent_type: str = "code") -> dict:
+def run(question: str, model_id: str = "deepseek-v4-flash", agent_type: str = "code", context: str = "") -> dict:
     model = OpenAIServerModel(
         model_id=model_id,
         api_base=OPENCODE_BASE,
@@ -108,11 +109,60 @@ def run(question: str, model_id: str = "deepseek-v4-flash", agent_type: str = "c
         agent = ToolCallingAgent(tools=[web_search], model=model, max_steps=3, verbosity_level=0)
     else:
         agent = CodeAgent(tools=[web_search], model=model, max_steps=3, verbosity_level=0)
-    answer = agent.run(question)
+    task = question
+    if context.strip():
+        task = (
+            "以下是同一討論串中先前的訊息（供你理解上下文，不需重述）：\n\n"
+            + context.strip()
+            + "\n\n請根據以上內容回答使用者的最新問題：\n"
+            + question
+        )
+    answer = agent.run(task)
     return {"answer": str(answer), "steps": []}
+
+
+def _format_context(messages: list[dict], max_chars: int = 8000) -> str:
+    """Build a readable transcript of prior messages for the agent.
+
+    Excludes the last user turn (that's the live question). Strips @mentions
+    (forum routing) and the "author: " prefixes the plugin adds.
+    """
+    if not messages:
+        return ""
+    lines = []
+    total = 0
+    for m in messages:
+        if total >= max_chars:
+            break
+        role = "使用者" if m.get("role") == "user" else "AI"
+        c = m.get("content") or ""
+        if isinstance(c, list):
+            c = " ".join(
+                el.get("text", "") for el in c
+                if isinstance(el, dict) and el.get("type") == "text"
+            )
+        c = re.sub(r"@[A-Za-z0-9_\-]+", " ", str(c))
+        c = re.sub(r"^\s*[\w.@\-]+\s*:\s*", " ", c)  # "author: " prefix
+        c = " ".join(c.split())
+        if not c.strip():
+            continue
+        line = f"{role}: {c}"
+        if total + len(line) > max_chars:
+            line = line[: max_chars - total]
+        lines.append(line)
+        total += len(line)
+    return "\n\n".join(lines)
 
 
 if __name__ == "__main__":
     q = sys.argv[1] if len(sys.argv) > 1 else "今天台灣的重要新聞有哪些？"
     agent_type = sys.argv[2] if len(sys.argv) > 2 else "code"
-    print(run(q, agent_type=agent_type)["answer"])
+    # optional third arg: JSON-encoded message list for thread context
+    context = ""
+    if len(sys.argv) > 3 and sys.argv[3]:
+        try:
+            import json as _json
+            context = _format_context(_json.loads(sys.argv[3]))
+        except Exception:
+            context = sys.argv[3]
+    print(run(q, agent_type=agent_type, context=context)["answer"])

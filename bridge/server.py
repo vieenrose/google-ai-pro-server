@@ -124,6 +124,36 @@ class BridgeHandler(BaseHTTPRequestHandler):
     opencode_backend = None
     token = ""
 
+    OPENCODE_KEY_FILE = str(Path(__file__).resolve().parent / ".opencode_key")
+
+    @classmethod
+    def _load_opencode_key_file(cls) -> str:
+        """Admin-set OpenCode key persisted by the plugin (overrides env)."""
+        try:
+            with open(cls.OPENCODE_KEY_FILE, encoding="utf-8") as f:
+                key = f.read().strip()
+            if key:
+                return key
+        except OSError:
+            pass
+        return os.environ.get("OPENCODE_API_KEY", "")
+
+    @classmethod
+    def _save_opencode_key_file(cls, api_key: str) -> None:
+        try:
+            Path(cls.OPENCODE_KEY_FILE).write_text(api_key.strip(), encoding="utf-8")
+        except OSError:
+            pass
+
+    @classmethod
+    def _refresh_opencode_backend(cls) -> None:
+        """Create/repoint the OpenCode backend with the current key."""
+        key = cls._load_opencode_key_file()
+        if cls.opencode_backend is not None:
+            cls.opencode_backend.api_key = key
+        else:
+            cls.opencode_backend = OpenCodeBackend(api_key=key)
+
     OPENCODE_PREFIXES = ("deepseek", "mimo", "glm", "grok", "kimi", "minimax", "qwen", "gpt-5.6", "hy3")
 
     def backend_for(self, model):
@@ -131,7 +161,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         m = (model or "").lower()
         if m.startswith(self.OPENCODE_PREFIXES):
             if BridgeHandler.opencode_backend is None:
-                BridgeHandler.opencode_backend = OpenCodeBackend()
+                BridgeHandler._refresh_opencode_backend()
             return BridgeHandler.opencode_backend
         return self.backend
 
@@ -173,8 +203,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         elif self.path == "/api/quota":
             try:
                 gem = self.backend.quota()
-                if BridgeHandler.opencode_backend is None:
-                    BridgeHandler.opencode_backend = OpenCodeBackend()
+                BridgeHandler._refresh_opencode_backend()
                 oc = BridgeHandler.opencode_backend.quota()
                 merged = dict(gem)  # keep top-level models + fetched_at (Discourse plugin reads @quota["models"])
                 merged["opencode"] = oc
@@ -280,7 +309,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 <table><thead><tr><th>模型</th><th>剩餘額度</th><th>重設倒數</th></tr></thead><tbody>
 {gem_rows}
 </tbody></table>
-<h2>OpenCode Go（deepseek-v4-pro / flash 等）</h2>
+<h2>OpenCode Go（deepseek-v4-flash / mimo-v2.5）</h2>
 <table><thead><tr><th>模型</th><th>剩餘額度</th><th>重設倒數</th></tr></thead><tbody>
 {oc_rows if oc_rows else "<tr><td colspan=3 class='key'>—</td></tr>"}
 </tbody></table>
@@ -318,6 +347,15 @@ tick(); setInterval(tick, 1000);
             self._chat(body)
         elif self.path == "/v1/deep-research":
             self._deep_research(body)
+        elif self.path == "/v1/config/opencode-key":
+            key = (body.get("api_key") or "").strip()
+            if not key:
+                self._error(400, "api_key required", "invalid_request_error")
+                return
+            BridgeHandler._save_opencode_key_file(key)
+            BridgeHandler._refresh_opencode_backend()
+            sys.stderr.write(f"[bridge] OpenCode API key updated by admin ({key[:8]}...)\n")
+            self._send(200, {"ok": True, "updated": True})
         else:
             self._send(404, {"error": "not found"})
 
@@ -360,16 +398,32 @@ tick(); setInterval(tick, 1000);
 
     def _smol_answer_stream(self, messages, model):
         """Run the smolagents CodeAgent (SearXNG tool) as a subprocess and
-        stream its answer back in chunks. Used for OpenCode Go models."""
+        stream its answer back in chunks. Used for OpenCode Go models.
+
+        The agent gets the LAST user turn as its task PLUS the prior thread
+        history as context (JSON in argv[3]) so it can answer questions like
+        "summarize the previous post" instead of replying in confusion.
+        """
         question = searxng.last_user_query(messages or [])
         py = os.environ.get("SMOLAGENTS_PY", "/home/luigi/bridge-venv/bin/python")
         script = Path(__file__).resolve().parent / "smol_agent.py"
         if not question or not Path(py).exists() or not script.exists():
             yield "\n\n[agent unavailable — answer from model knowledge]"
             return
+        # prior history = all messages except the last user turn (the live question)
+        prior = list(messages or [])
+        for m in reversed(prior):
+            c = m.get("content")
+            if isinstance(c, str) and c.strip():
+                prior.pop()
+                break
+            if isinstance(c, list) and any(isinstance(el, dict) and el.get("type") == "text" for el in c):
+                prior.pop()
+                break
+        history_json = json.dumps(prior, ensure_ascii=False) if prior else ""
         try:
             proc = subprocess.run(
-                [py, str(script), question, "code"],
+                [py, str(script), question, "code", history_json],
                 capture_output=True,
                 text=True,
                 timeout=300,
