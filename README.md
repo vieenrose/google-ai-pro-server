@@ -10,8 +10,9 @@
 2. **Quota monitor** — public `/sloth-ai` + admin page: per-model status
    (OK / Low / Exhausted) + remaining quota + reset countdowns across
    Google AI Pro, OpenCode Go and Together AI — including known aliases
-   that are *not* in the upstream catalog, and internal chat_*/tab_* ids
-   (both folded away by default). Model catalog refreshes hourly.
+   that are *not* in the upstream catalog. `tab_*` completion models are
+   shown as available (verified servable); `chat_*` ids stay folded away
+   (they carry quota but reject chat requests with HTTP 400). Model catalog refreshes hourly.
 3. **Subscription management** — Google AI Pro OAuth status + two-step PKCE
    re-auth in the admin page.
 

@@ -606,7 +606,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
             name = str(m.get("name") or key)
             frac = float(m.get("remaining") or 0)
             pct = frac * 100
-            if key.startswith(("chat_", "tab_")):
+            # chat_* ids carry quota but reject agent chat requests (HTTP 400) —
+            # verified live. tab_* are tab-completion models but DO serve text,
+            # so they stay in the main table as available models.
+            if key.startswith("chat_"):
                 internal_rows.append(
                     f"<div class='int-row'><span class='key'>{esc(key)}</span>"
                     f"<span class='pct'>{pct:.1f}%</span></div>")
@@ -651,8 +654,10 @@ class BridgeHandler(BaseHTTPRequestHandler):
 
         internal_block = (
             "<details class='fold'><summary>"
-            f"內部識別碼 ({len(internal_rows)}) — chat_*/tab_*" 
+            f"內部識別碼 ({len(internal_rows)}) — chat_*（有額度但不接受對話請求，實測 HTTP 400）" 
             f"</summary>{''.join(internal_rows)}</details>") if internal_rows else ""
+        tab_note = ("<div class='note'>tab_* 為 Tab 補全模型：可回應文字（已實測），但為自動完成調校，不適合作為對話 bot。</div>"
+                    if any(r[1].startswith("tab_") for r in main_rows) else "")
 
         if not ag.get("ok"):
             attention_html = f"<div class='alert red'>⚠️ Google AI Pro 配額讀取失敗：{esc(ag.get('error', ''))}</div>"
@@ -767,6 +772,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
 </tbody></table>
 {missing_block}
 {internal_block}
+{tab_note}
 <h2>OpenCode Go — 訂閱用量</h2>
 {oc_block}
 <h2>Together AI — 模型</h2>
