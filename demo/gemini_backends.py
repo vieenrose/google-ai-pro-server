@@ -96,7 +96,8 @@ class AgyBackend:
     # Gemini 3.x models use a -low/-medium/-high suffix on this backend.
     MODEL_ALIASES = {
         "gemini-3.6-flash": "gemini-3.6-flash-low",
-        "gemini-3.7-flash": "gemini-3.7-flash",  # in catalog? not yet (404 as of 2026-08-13)
+        "gemini-3.7-flash": "gemini-3.7-flash-tiered",
+        "gemini-3.8-flash": "gemini-3.8-flash-tiered",
         "gemini-3.5-flash": "gemini-3.5-flash-low",
         "gemini-3-flash": "gemini-3-flash",
         "gemini-3.1-pro": "gemini-3.1-pro-low",
@@ -1113,7 +1114,8 @@ class AntigravityAppBackend(GeminiApiBackend):
 
     MODEL_ALIASES = {
         "gemini-3.6-flash": "gemini-3.6-flash-low",
-        "gemini-3.7-flash": "gemini-3.7-flash",  # in catalog? not yet (404 as of 2026-08-13)
+        "gemini-3.7-flash": "gemini-3.7-flash-tiered",
+        "gemini-3.8-flash": "gemini-3.8-flash-tiered",
         "gemini-3.5-flash": "gemini-3.5-flash-low",
         "gemini-3.1-flash-lite": "gemini-3.1-flash-lite",
         "gemini-3-flash": "gemini-3-flash",
