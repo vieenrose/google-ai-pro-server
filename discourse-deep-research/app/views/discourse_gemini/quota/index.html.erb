@@ -23,6 +23,22 @@
     border: 1px solid var(--primary-low-mid, #bbb); border-radius: 4px; font-family: monospace; font-size: 13px;
     background: var(--secondary, #fff); color: var(--primary, #222); }
   .agq-box .hint { font-size: 12px; color: var(--primary-medium, #888); margin: 3px 0 0; }
+  .agq-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .agq-pill.green { background: #14532d; color: #bbf7d0; }
+  .agq-pill.yellow { background: #713f12; color: #fde68a; }
+  .agq-pill.red { background: #7f1d1d; color: #fecaca; }
+  .agq-pool { border: 1px solid var(--primary-low, #ddd); border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 12px; background: var(--secondary, #fff); }
+  .agq-pool-head { display: flex; justify-content: space-between; align-items: center;
+    gap: 10px; font-size: 15px; margin-bottom: 10px; }
+  .agq-pool-row { display: flex; justify-content: space-between; margin: 6px 0; }
+  .agq-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .agq-chip { background: var(--primary-low, #eee); border-radius: 6px; padding: 3px 9px;
+    font-size: 12px; font-family: monospace; }
+  .agq-note { color: var(--primary-medium, #777); font-size: 12px; margin-top: 6px; }
+  #agq-filter { width: 100%; box-sizing: border-box; padding: 8px 12px; margin: 4px 0 8px;
+    border: 1px solid var(--primary-low-mid, #bbb); border-radius: 8px;
+    background: var(--secondary, #fff); color: var(--primary, #222); font-size: 14px; }
 </style>
 
 <div class="agq-wrap">
@@ -88,34 +104,65 @@
       來源 Google AI Pro（Antigravity）·
       <a href="<%= @admin_page ? "/admin/plugins/sloth-ai" : "/sloth-ai" %>" data-auto-route-alt="">重新整理</a>
     </div>
-    <table>
-      <thead><tr><th>模型</th><th>剩餘額度</th><th>重設倒數</th></tr></thead>
-      <tbody>
-      <% seen = Set.new
-         @quota["models"].each do |m| %>
-        <% name = m["name"] || m["key"]
-           next if seen.include?(name)
-           seen << name
-           frac = m["remaining"].to_f; pct = frac * 100.0
-           color = frac > 0.5 ? "#16a34a" : (frac > 0.1 ? "#ca8a04" : "#dc2626") %>
-        <tr>
-          <td>
-            <%= name %>
-            <div class="agq-key"><%= m["key"] %></div>
-          </td>
-          <td>
-            <div class="agq-bar"><div class="agq-fill" style="width:<%= pct.round(1) %>%;background:<%= color %>"></div></div>
-            <span class="agq-pct"><%= format("%.2f", pct) %>%</span>
-          </td>
-          <td class="agq-reset" data-reset="<%= m["reset_time"] %>">—</td>
-        </tr>
-      <% end %>
-      </tbody>
-    </table>
+    <input id="agq-filter" placeholder="篩選… / filter pools & models…">
+    <div id="agq-count" class="agq-sub"></div>
+    <% fam = lambda { |key|
+         k = key.to_s.downcase
+         next "Chat" if k.start_with?("chat_")
+         next "Tab" if k.start_with?("tab_")
+         next "GPT-OSS" if k.start_with?("gpt-")
+         k.split("-").first.capitalize
+       }
+       pools = @quota["models"].group_by { |m| [m["remaining"].to_f.round(4), m["reset_time"].to_s[0, 19]] }
+       cards = pools.map do |(frac, _rst), members|
+         pct = frac * 100.0
+         fams = members.map { |x| fam.call(x["key"]) }.uniq.sort
+         pname = if (fams - %w[Chat Tab]).empty?
+                   "Chat / Tab 內部共用額度"
+                 else
+                   "#{(fams - %w[Chat Tab]).join(" / ")} 共用額度 Shared pool"
+                 end
+         rank, status, cls, color = if frac <= 0
+           [0, "用完 Exhausted", "red", "#dc2626"]
+         elsif frac <= 0.1
+           [1, "偏低 Low", "yellow", "#ca8a04"]
+         else
+           [2, "可用 OK", "green", "#16a34a"]
+         end
+         keys = members.map { |x| x["key"].to_s }
+         caveats = []
+         caveats << "chat_* 有額度但不接受對話請求（實測 HTTP 400）" if keys.any? { |k| k.start_with?("chat_") }
+         caveats << "tab_* 為 Tab 補全模型：可回應文字，但為自動完成調校" if keys.any? { |k| k.start_with?("tab_") }
+         reset_iso = members.map { |x| x["reset_time"].to_s }.find { |s| s.present? } || ""
+         [rank, pname.start_with?("Chat / Tab"), pname, pct, color, status, cls, members, caveats, reset_iso]
+       end
+       cards.sort_by! { |c| [c[0], c[1] ? 1 : 0, c[2]] } %>
+    <div id="agq-pools">
+    <% cards.each do |_rank, _last, pname, pct, color, status, cls, members, caveats, reset_iso| %>
+      <div class="agq-pool">
+        <div class="agq-pool-head"><b><%= pname %></b> <span class="agq-pill <%= cls %>"><%= status %></span></div>
+        <div class="agq-bar"><div class="agq-fill" style="width:<%= pct.round(1) %>%;background:<%= color %>"></div></div>
+        <div class="agq-pool-row">
+          <span class="agq-pct"><%= format("%.2f", pct) %>% 剩餘</span>
+          <span class="agq-reset" data-reset="<%= reset_iso %>">—</span>
+        </div>
+        <div class="agq-note"><%= members.size %> 個模型</div>
+        <div class="agq-chips">
+          <% members.sort_by { |x| x["key"].to_s }.each do |x| %>
+            <span class="agq-chip" title="<%= x["name"] || x["key"] %>"><%= x["key"] %></span>
+          <% end %>
+        </div>
+        <% caveats.each do |c| %>
+          <div class="agq-note"><%= c %></div>
+        <% end %>
+      </div>
+    <% end %>
+    </div>
+    <div class="agq-note">同一池內的模型共用額度：用量扣同一池，重設時間一致。</div>
     <script>
       (function () {
         function tick() {
-          document.querySelectorAll("td.agq-reset").forEach(function (el) {
+          document.querySelectorAll(".agq-reset").forEach(function (el) {
             var iso = el.getAttribute("data-reset");
             if (!iso) { el.textContent = "—"; return; }
             var t = new Date(iso).getTime() - Date.now();
@@ -126,6 +173,19 @@
             if (s < 900) el.classList.add("agq-warn");
           });
         }
+        function filt(q) {
+          q = q.toLowerCase();
+          var cards = document.querySelectorAll("#agq-pools .agq-pool"), n = 0;
+          cards.forEach(function (c) {
+            var hit = c.textContent.toLowerCase().indexOf(q) >= 0;
+            c.style.display = hit ? "" : "none";
+            if (hit) n++;
+          });
+          document.getElementById("agq-count").textContent = n + " / " + cards.length + " 個共用額度";
+        }
+        document.getElementById("agq-filter").addEventListener("input", function (e) { filt(e.target.value); });
+        document.getElementById("agq-count").textContent =
+          document.querySelectorAll("#agq-pools .agq-pool").length + " 個共用額度";
         tick();
         setInterval(tick, 1000);
       })();
