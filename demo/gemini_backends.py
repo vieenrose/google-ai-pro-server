@@ -1279,13 +1279,20 @@ class AntigravityAppBackend(GeminiApiBackend):
                 raise RuntimeError("Antigravity app returned no Cloud AI Companion project")
         return self._project_id
 
+    _MODELS_TTL = 3600  # refresh the catalog hourly so new models appear without a restart
+
     def _model_config(self, model: str) -> tuple[str, dict]:
         app_model = self.MODEL_ALIASES.get(model, model)
-        if not self._models:
+        now = time.time()
+        if not self._models or now - getattr(self, "_models_at", 0) > self._MODELS_TTL:
             response = self._post("fetchAvailableModels", {"project": self._project()})
             if response.get("__error__"):
-                raise RuntimeError(response["__error__"])
-            self._models = response.get("models", {})
+                if not self._models:
+                    raise RuntimeError(response["__error__"])
+                # refresh failed: keep serving the stale catalog
+            else:
+                self._models = response.get("models", {})
+                self._models_at = now
         config = self._models.get(app_model, {})
         if not config:
             raise RuntimeError(f"Antigravity app model is unavailable: {app_model}")

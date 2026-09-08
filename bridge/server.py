@@ -37,7 +37,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "demo"))
 
-from gemini_backends import build_prompt, pick_backend, ChatResult  # noqa: E402
+from gemini_backends import (  # noqa: E402
+    build_prompt, pick_backend, ChatResult,
+    AntigravityAppBackend, OpenCodeBackend, TogetherAIBackend,
+)
 from deep_research import run_research  # noqa: E402
 
 IMAGE_GEN_MODEL = "gemini-3.1-flash-image"
@@ -143,15 +146,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             except Exception as e:  # noqa: BLE001
                 self._send(502, {"error": str(e)})
         elif self.path == "/quota" or self.path.startswith("/quota?") or self.path == "/sloth-ai":
-            try:
-                gem = self.backend.quota()
-            except Exception as e:  # noqa: BLE001
-                body = (f"<!doctype html><html><body style='font-family:sans-serif;padding:2em'>"
-                        f"<h2>⚠️ 無法讀取配額</h2><p>{e}</p>"
-                        f"<meta http-equiv='refresh' content='60'></body></html>").encode()
-                self._send_html(body)
-                return
-            self._send_html(self._quota_page(gem))
+            self._send_html(self._quota_page(self._quota_snapshot()))
         else:
             self._send(404, {"error": "not found"})
 
@@ -531,33 +526,184 @@ class BridgeHandler(BaseHTTPRequestHandler):
             sys.stderr.write(f"[bridge] upload_to_forum failed: {e}\n")
             return ""
 
-    # ── quota HTML page (Google AI Pro) ────────────────────────────────────
+    # ── quota monitor snapshot (multi-backend) ─────────────────────────────
+    def _quota_snapshot(self) -> dict:
+        """Collect quota/state from every backend the bridge knows.
+
+        Slow or unconfigured backends degrade to an error state instead of
+        blocking the page: each fetch runs in its own thread with a timeout.
+        """
+        import concurrent.futures as _cf
+        snap: dict = {"fetched_at": time.time()}
+
+        def _ag() -> dict:
+            try:
+                q = self.backend.quota()
+                return {"ok": True, "fetched_at": q.get("fetched_at"), "models": q.get("models") or []}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)[:200]}
+
+        def _oc() -> dict:
+            try:
+                b = OpenCodeBackend()
+                if not b.available():
+                    return {"ok": False, "error": "未設定 (no API key)"}
+                q = b.quota()
+                if q.get("error"):
+                    return {"ok": False, "error": str(q["error"])[:200]}
+                return {"ok": True, "fetched_at": q.get("fetched_at"), "models": q.get("models") or []}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)[:200]}
+
+        def _to() -> dict:
+            try:
+                b = TogetherAIBackend()
+                if not b.available():
+                    return {"ok": False, "error": "未設定 (no API key)"}
+                return {"ok": True, "models": b.list_models()}
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "error": str(e)[:200]}
+
+        ex = _cf.ThreadPoolExecutor(max_workers=3)
+        try:
+            f_ag, f_oc, f_to = ex.submit(_ag), ex.submit(_oc), ex.submit(_to)
+            try:
+                snap["antigravity"] = f_ag.result(timeout=25)
+            except Exception:
+                snap["antigravity"] = {"ok": False, "error": "讀取逾時 (timeout)"}
+            try:
+                snap["opencode"] = f_oc.result(timeout=8)
+            except Exception:
+                snap["opencode"] = {"ok": False, "error": "無法連線 (timeout)"}
+            try:
+                snap["together"] = f_to.result(timeout=8)
+            except Exception:
+                snap["together"] = {"ok": False, "error": "無法連線 (timeout)"}
+        finally:
+            ex.shutdown(wait=False, cancel_futures=True)
+        return snap
+
+    # ── quota HTML page (all backends) ─────────────────────────────────────
     @staticmethod
-    def _quota_page(gem_data: dict) -> bytes:
+    def _quota_page(snap: dict) -> bytes:
         import html as _html
-        rows = []
-        models = gem_data.get("models") or []
-        # de-duplicate same display name
-        seen = set()
-        for m in models:
-            name = m.get("name") or m.get("key")
-            if name in seen:
-                continue
-            seen.add(name)
-            frac = float(m.get("remaining", 0))
+
+        def esc(s) -> str:
+            return _html.escape(str(s or ""))
+
+        def bar(pct: float, color: str) -> str:
+            w = max(0.0, min(100.0, pct))
+            return ("<div class='bar'><div class='fill' "
+                    f"style='width:{w:.1f}%;background:{color}'></div></div>")
+
+        # ── Antigravity: main table + internal ids ──
+        ag = snap.get("antigravity") or {}
+        ag_models = ag.get("models") or [] if ag.get("ok") else []
+        catalog_keys = {str(m.get("key")) for m in ag_models if m.get("key")}
+        main_rows, internal_rows, attention = [], [], []
+        for m in ag_models:
+            key = str(m.get("key") or "")
+            name = str(m.get("name") or key)
+            frac = float(m.get("remaining") or 0)
             pct = frac * 100
-            color = "#16a34a" if frac > 0.5 else ("#ca8a04" if frac > 0.1 else "#dc2626")
-            rows.append(
+            if key.startswith(("chat_", "tab_")):
+                internal_rows.append(
+                    f"<div class='int-row'><span class='key'>{esc(key)}</span>"
+                    f"<span class='pct'>{pct:.1f}%</span></div>")
+                continue
+            if frac <= 0:
+                status, cls, color, rank = "用完 Exhausted", "red", "#dc2626", 0
+            elif frac <= 0.1:
+                status, cls, color, rank = "偏低 Low", "yellow", "#ca8a04", 1
+            else:
+                status, cls, color, rank = "可用 OK", "green", "#16a34a", 2
+            if rank < 2:
+                attention.append(f"{name} ({pct:.1f}%)")
+            main_rows.append((rank, key,
                 "<tr>"
-                f"<td>{_html.escape(name)}<div class='key'>{_html.escape(m.get('key', ''))}</div></td>"
-                "<td class='bar-cell'><div class='bar'><div class='fill' "
-                f"style='width:{pct:.1f}%;background:{color}'></div></div>"
-                f"<span class='pct'>{pct:.2f}%</span></td>"
-                f"<td class='reset' data-reset='{_html.escape(m.get('reset_time', ''))}'>—</td>"
-                "</tr>"
-            )
-        fetched = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(gem_data.get("fetched_at", time.time())))
-        rows_html = "\n".join(rows) if rows else "<tr><td colspan=3 class='key'>無資料</td></tr>"
+                f"<td>{esc(name)}<div class='key'>{esc(key)}</div></td>"
+                f"<td><span class='pill {cls}'>{status}</span></td>"
+                f"<td class='bar-cell'>{bar(pct, color)}<span class='pct'>{pct:.2f}%</span></td>"
+                f"<td class='reset' data-reset='{esc(m.get('reset_time', ''))}'>—</td>"
+                "</tr>"))
+        main_rows.sort(key=lambda r: (r[0], r[1]))
+        main_html = "\n".join(r[2] for r in main_rows) or "<tr><td colspan=4 class='key'>無資料</td></tr>"
+
+        # ── known aliases whose app-side id is NOT in the catalog ──
+        by_target: dict = {}
+        for friendly, target in AntigravityAppBackend.MODEL_ALIASES.items():
+            by_target.setdefault(str(target), []).append(str(friendly))
+        missing = sorted(t for t in by_target if t not in catalog_keys)
+        if not ag.get("ok"):
+            missing_block = ""
+        elif missing:
+            rows = "\n".join(
+                "<div class='miss-row'>"
+                f"<span><b>{esc(' / '.join(by_target[t]))}</b> → <span class='key'>{esc(t)}</span></span>"
+                "<span class='pill gray'>無此模型 Not in catalog</span>"
+                "</div>" for t in missing)
+            missing_block = (
+                "<details class='fold'><summary>"
+                f"不在目錄中的已知模型 ({len(missing)}) — 預先設定的別名或已被下架" 
+                f"</summary>{rows}</details>")
+        else:
+            missing_block = "<div class='allok'>✅ 所有已知模型都在目錄中</div>"
+
+        internal_block = (
+            "<details class='fold'><summary>"
+            f"內部識別碼 ({len(internal_rows)}) — chat_*/tab_*" 
+            f"</summary>{''.join(internal_rows)}</details>") if internal_rows else ""
+
+        if not ag.get("ok"):
+            attention_html = f"<div class='alert red'>⚠️ Google AI Pro 配額讀取失敗：{esc(ag.get('error', ''))}</div>"
+        elif attention:
+            attention_html = f"<div class='alert yellow'>⚠️ 需要注意：{esc('、'.join(attention))}</div>"
+        else:
+            attention_html = "<div class='alert green'>✅ 所有可用模型額度充足</div>"
+
+        # ── header pills ──
+        ag_pill = (f"<span class='pill green'>Google AI Pro · {len(main_rows)} 個模型</span>"
+                   if ag.get("ok") else "<span class='pill red'>Google AI Pro · 讀取失敗</span>")
+        oc = snap.get("opencode") or {}
+        if oc.get("ok"):
+            roll = next((x for x in (oc.get("models") or []) if x.get("key") == "rolling"), None)
+            oc_pill = (f"<span class='pill green'>OpenCode Go · 今日剩餘 {float(roll.get('remaining', 0)) * 100:.0f}%</span>"
+                       if roll is not None else "<span class='pill green'>OpenCode Go · 已連線</span>")
+        else:
+            oc_pill = f"<span class='pill gray'>OpenCode Go · {esc(oc.get('error', '未知'))}</span>"
+        to = snap.get("together") or {}
+        if to.get("ok"):
+            to_pill = f"<span class='pill green'>Together AI · {len(to.get('models') or [])} 個模型</span>"
+        else:
+            to_pill = f"<span class='pill gray'>Together AI · {esc(to.get('error', '未知'))}</span>"
+
+        # ── OpenCode Go usage cards ──
+        if oc.get("ok"):
+            cards = []
+            for u in oc.get("models") or []:
+                frac = float(u.get("remaining") or 0)
+                pct = frac * 100
+                color = "#16a34a" if frac > 0.5 else ("#ca8a04" if frac > 0.1 else "#dc2626")
+                cards.append(
+                    "<div class='card'>"
+                    f"<div class='card-name'>{esc(u.get('name') or u.get('key'))}</div>"
+                    f"{bar(pct, color)}<div class='card-row'><span class='pct'>{pct:.1f}% 剩餘</span>"
+                    f"<span class='reset' data-reset='{esc(u.get('reset_time', ''))}'>—</span></div>"
+                    "</div>")
+            oc_block = f"<div class='cards'>{''.join(cards)}</div>" if cards else "<div class='note'>無額度資料</div>"
+        else:
+            oc_block = f"<div class='note'>{esc(oc.get('error', ''))} — 設定 OPENCODE_API_KEY 後會顯示用量</div>"
+
+        # ── Together AI model chips ──
+        if to.get("ok"):
+            ids = [str(x.get("id")) for x in (to.get("models") or []) if x.get("id")]
+            chips = "".join(f"<span class='chip'>{esc(i)}</span>" for i in ids[:60])
+            more = f"<span class='note'>＋{len(ids) - 60} more</span>" if len(ids) > 60 else ""
+            to_block = f"<div class='chips'>{chips}{more}</div>" if ids else "<div class='note'>金鑰有效，但沒有回傳模型</div>"
+        else:
+            to_block = f"<div class='note'>{esc(to.get('error', ''))} — 設定 TOGETHER_API_KEY 後會顯示模型</div>"
+
+        fetched = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(snap.get("fetched_at", time.time())))
         html = f"""<!doctype html>
 <html lang="zh-TW"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -566,9 +712,23 @@ class BridgeHandler(BaseHTTPRequestHandler):
 <style>
  body {{ font-family: -apple-system, 'Segoe UI', 'Noto Sans TC', sans-serif; margin: 0;
         background: #0f172a; color: #e2e8f0; }}
- .wrap {{ max-width: 860px; margin: 0 auto; padding: 24px 16px; }}
+ .wrap {{ max-width: 900px; margin: 0 auto; padding: 24px 16px; }}
  h1 {{ font-size: 20px; margin: 0 0 4px; }}
- .sub {{ color: #94a3b8; font-size: 13px; margin-bottom: 20px; }}
+ h2 {{ font-size: 16px; margin: 28px 0 10px; color: #e2e8f0; }}
+ .sub {{ color: #94a3b8; font-size: 13px; margin-bottom: 12px; }}
+ .pills {{ display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 14px; }}
+ .pill {{ display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }}
+ .pill.green {{ background: #14532d; color: #bbf7d0; }}
+ .pill.yellow {{ background: #713f12; color: #fde68a; }}
+ .pill.red {{ background: #7f1d1d; color: #fecaca; }}
+ .pill.gray {{ background: #334155; color: #cbd5e1; }}
+ .alert {{ padding: 10px 14px; border-radius: 8px; font-size: 14px; margin-bottom: 6px; }}
+ .alert.green {{ background: #052e16; color: #bbf7d0; }}
+ .alert.yellow {{ background: #451a03; color: #fde68a; }}
+ .alert.red {{ background: #450a0a; color: #fecaca; }}
+ #filter {{ width: 100%; box-sizing: border-box; padding: 8px 12px; margin: 4px 0 8px;
+      background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; font-size: 14px; }}
+ #count {{ color: #64748b; font-size: 12px; margin-bottom: 4px; }}
  table {{ width: 100%; border-collapse: collapse; }}
  th {{ text-align: left; font-size: 12px; color: #94a3b8; padding: 8px;
       border-bottom: 1px solid #1e293b; }}
@@ -579,15 +739,41 @@ class BridgeHandler(BaseHTTPRequestHandler):
  .pct {{ font-variant-numeric: tabular-nums; margin-left: 8px; font-size: 13px; }}
  .reset {{ color: #94a3b8; font-variant-numeric: tabular-nums; font-size: 13px; }}
  .warn {{ color: #fca5a5; }}
+ details.fold {{ margin-top: 10px; background: #0b1220; border: 1px solid #1e293b;
+      border-radius: 8px; padding: 10px 14px; font-size: 13px; }}
+ details.fold summary {{ cursor: pointer; color: #94a3b8; }}
+ .miss-row {{ display: flex; justify-content: space-between; align-items: center;
+      gap: 10px; padding: 8px 0; border-bottom: 1px solid #1e293b; }}
+ .int-row {{ display: flex; justify-content: space-between; padding: 4px 0; }}
+ .allok {{ color: #86efac; font-size: 13px; margin-top: 8px; }}
+ .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }}
+ .card {{ background: #0b1220; border: 1px solid #1e293b; border-radius: 8px; padding: 12px 14px; }}
+ .card-name {{ font-size: 14px; margin-bottom: 8px; }}
+ .card-row {{ display: flex; justify-content: space-between; margin-top: 6px; }}
+ .chips {{ display: flex; gap: 6px; flex-wrap: wrap; }}
+ .chip {{ background: #1e293b; border-radius: 6px; padding: 3px 9px; font-size: 12px;
+      font-family: monospace; color: #cbd5e1; }}
+ .note {{ color: #64748b; font-size: 13px; }}
 </style></head><body><div class="wrap">
 <h1>🎫 AI Token 額度 / Quota Monitor</h1>
-<div class="sub">每 60 秒自動更新 · 資料擷取於 {fetched}（本機時間）· 來源：Google AI Pro（Antigravity）</div>
-<table><thead><tr><th>模型</th><th>剩餘額度</th><th>重設倒數</th></tr></thead><tbody>
-{rows_html}
+<div class="sub">每 60 秒自動更新 · 資料擷取於 {fetched}（本機時間）</div>
+<div class="pills">{ag_pill} {oc_pill} {to_pill}</div>
+{attention_html}
+<h2>Google AI Pro — 模型額度</h2>
+<input id="filter" placeholder="篩選模型… / filter models…" oninput="filt(this.value)">
+<div id="count"></div>
+<table id="ag-table"><thead><tr><th>模型</th><th>狀態</th><th>剩餘額度</th><th>重設倒數</th></tr></thead><tbody>
+{main_html}
 </tbody></table>
+{missing_block}
+{internal_block}
+<h2>OpenCode Go — 訂閱用量</h2>
+{oc_block}
+<h2>Together AI — 模型</h2>
+{to_block}
 <script>
 function tick() {{
-  document.querySelectorAll('td.reset').forEach(el => {{
+  document.querySelectorAll('.reset[data-reset]').forEach(el => {{
     const iso = el.dataset.reset;
     if (!iso) {{ el.textContent = '—'; return; }}
     const t = new Date(iso).getTime() - Date.now();
@@ -598,6 +784,19 @@ function tick() {{
     if (s < 900) el.classList.add('warn');
   }});
 }}
+function filt(q) {{
+  q = q.toLowerCase();
+  const trs = document.querySelectorAll('#ag-table tbody tr');
+  let n = 0;
+  trs.forEach(tr => {{
+    const hit = tr.textContent.toLowerCase().includes(q);
+    tr.style.display = hit ? '' : 'none';
+    if (hit) n++;
+  }});
+  document.getElementById('count').textContent = n + ' / ' + trs.length;
+}}
+ document.getElementById('count').textContent =
+  document.querySelectorAll('#ag-table tbody tr').length + ' 個模型';
 tick(); setInterval(tick, 1000);
 </script></body></html>"""
         return html.encode()
