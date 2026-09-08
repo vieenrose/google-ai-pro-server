@@ -596,24 +596,36 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return ("<div class='bar'><div class='fill' "
                     f"style='width:{w:.1f}%;background:{color}'></div></div>")
 
-        # ── Antigravity: main table + internal ids ──
+        # ── Antigravity: group models into shared quota pools ──
+        # Pool identity = (remaining fraction, reset time): models drawing
+        # from the same pool always report identical values.
         ag = snap.get("antigravity") or {}
         ag_models = ag.get("models") or [] if ag.get("ok") else []
         catalog_keys = {str(m.get("key")) for m in ag_models if m.get("key")}
-        main_rows, internal_rows, attention = [], [], []
+        pools: dict = {}
         for m in ag_models:
             key = str(m.get("key") or "")
-            name = str(m.get("name") or key)
-            frac = float(m.get("remaining") or 0)
+            sig = (round(float(m.get("remaining") or 0), 4), str(m.get("reset_time") or "")[:19])
+            pools.setdefault(sig, []).append(m)
+
+        def _family(key: str) -> str:
+            k = key.lower()
+            if k.startswith("chat_"):
+                return "Chat"
+            if k.startswith("tab_"):
+                return "Tab"
+            if k.startswith("gpt-"):
+                return "GPT-OSS"
+            return k.split("-")[0].capitalize()
+
+        pool_cards, attention = [], []
+        for (frac, _reset19), members in pools.items():
             pct = frac * 100
-            # chat_* ids carry quota but reject agent chat requests (HTTP 400) —
-            # verified live. tab_* are tab-completion models but DO serve text,
-            # so they stay in the main table as available models.
-            if key.startswith("chat_"):
-                internal_rows.append(
-                    f"<div class='int-row'><span class='key'>{esc(key)}</span>"
-                    f"<span class='pct'>{pct:.1f}%</span></div>")
-                continue
+            fams = sorted({_family(str(x.get("key") or "")) for x in members})
+            if set(fams) <= {"Chat", "Tab"}:
+                pname = "Chat / Tab 內部共用額度"
+            else:
+                pname = f"{' / '.join(f for f in fams if f not in ('Chat', 'Tab'))} 共用額度 Shared pool"
             if frac <= 0:
                 status, cls, color, rank = "用完 Exhausted", "red", "#dc2626", 0
             elif frac <= 0.1:
@@ -621,16 +633,29 @@ class BridgeHandler(BaseHTTPRequestHandler):
             else:
                 status, cls, color, rank = "可用 OK", "green", "#16a34a", 2
             if rank < 2:
-                attention.append(f"{name} ({pct:.1f}%)")
-            main_rows.append((rank, key,
-                "<tr>"
-                f"<td>{esc(name)}<div class='key'>{esc(key)}</div></td>"
-                f"<td><span class='pill {cls}'>{status}</span></td>"
-                f"<td class='bar-cell'>{bar(pct, color)}<span class='pct'>{pct:.2f}%</span></td>"
-                f"<td class='reset' data-reset='{esc(m.get('reset_time', ''))}'>—</td>"
-                "</tr>"))
-        main_rows.sort(key=lambda r: (r[0], r[1]))
-        main_html = "\n".join(r[2] for r in main_rows) or "<tr><td colspan=4 class='key'>無資料</td></tr>"
+                attention.append(f"{pname} ({pct:.1f}%)")
+            chips = "".join(
+                f"<span class='chip' title='{esc(x.get('name') or x.get('key'))}'>{esc(x.get('key'))}</span>"
+                for x in sorted(members, key=lambda x: str(x.get("key"))))
+            reset_iso = next((str(x.get("reset_time") or "") for x in members if x.get("reset_time")), "")
+            keys = [str(x.get("key") or "") for x in members]
+            caveats = []
+            if any(k.startswith("chat_") for k in keys):
+                caveats.append("chat_* 有額度但不接受對話請求（實測 HTTP 400）")
+            if any(k.startswith("tab_") for k in keys):
+                caveats.append("tab_* 為 Tab 補全模型：可回應文字，但為自動完成調校")
+            caveat_html = f"<div class='note'>{esc('；'.join(caveats))}</div>" if caveats else ""
+            pool_cards.append((rank, pname.startswith("Chat / Tab"), pname,
+                "<div class='pool'>"
+                f"<div class='pool-head'><b>{esc(pname)}</b> <span class='pill {cls}'>{status}</span></div>"
+                f"<div class='pool-bar'>{bar(pct, color)}<span class='pct'>{pct:.2f}% 剩餘</span></div>"
+                f"<div class='pool-row'><span class='reset' data-reset='{esc(reset_iso)}'>—</span>"
+                f"<span class='note'>{len(members)} 個模型</span></div>"
+                f"<div class='chips'>{chips}</div>"
+                f"{caveat_html}"
+                "</div>"))
+        pool_cards.sort(key=lambda r: (r[0], r[1], r[2]))
+        pools_html = "\n".join(c[3] for c in pool_cards) if pool_cards else "<div class='note'>無資料</div>"
 
         # ── known aliases whose app-side id is NOT in the catalog ──
         by_target: dict = {}
@@ -652,12 +677,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
         else:
             missing_block = "<div class='allok'>✅ 所有已知模型都在目錄中</div>"
 
-        internal_block = (
-            "<details class='fold'><summary>"
-            f"內部識別碼 ({len(internal_rows)}) — chat_*（有額度但不接受對話請求，實測 HTTP 400）" 
-            f"</summary>{''.join(internal_rows)}</details>") if internal_rows else ""
-        tab_note = ("<div class='note'>tab_* 為 Tab 補全模型：可回應文字（已實測），但為自動完成調校，不適合作為對話 bot。</div>"
-                    if any(r[1].startswith("tab_") for r in main_rows) else "")
+        pools_note = "<div class='note'>同一池內的模型共用額度：用量扣同一池的重設時間一致。</div>" if pools else ""
 
         if not ag.get("ok"):
             attention_html = f"<div class='alert red'>⚠️ Google AI Pro 配額讀取失敗：{esc(ag.get('error', ''))}</div>"
@@ -667,7 +687,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             attention_html = "<div class='alert green'>✅ 所有可用模型額度充足</div>"
 
         # ── header pills ──
-        ag_pill = (f"<span class='pill green'>Google AI Pro · {len(main_rows)} 個模型</span>"
+        ag_pill = (f"<span class='pill green'>Google AI Pro · {len(pools)} 個共用額度</span>"
                    if ag.get("ok") else "<span class='pill red'>Google AI Pro · 讀取失敗</span>")
         oc = snap.get("opencode") or {}
         if oc.get("ok"):
@@ -734,6 +754,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
  #filter {{ width: 100%; box-sizing: border-box; padding: 8px 12px; margin: 4px 0 8px;
       background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; font-size: 14px; }}
  #count {{ color: #64748b; font-size: 12px; margin-bottom: 4px; }}
+ .pool {{ background: #0b1220; border: 1px solid #1e293b; border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 12px; }}
+ .pool-head {{ display: flex; justify-content: space-between; align-items: center;
+      gap: 10px; font-size: 15px; margin-bottom: 10px; }}
+ .pool-bar {{ display: flex; align-items: center; gap: 4px; }}
+ .pool-bar .bar {{ flex: 1; }}
+ .pool-row {{ display: flex; justify-content: space-between; margin: 6px 0 10px; }}
+ .pool .chips {{ margin-top: 2px; }}
  table {{ width: 100%; border-collapse: collapse; }}
  th {{ text-align: left; font-size: 12px; color: #94a3b8; padding: 8px;
       border-bottom: 1px solid #1e293b; }}
@@ -749,7 +777,6 @@ class BridgeHandler(BaseHTTPRequestHandler):
  details.fold summary {{ cursor: pointer; color: #94a3b8; }}
  .miss-row {{ display: flex; justify-content: space-between; align-items: center;
       gap: 10px; padding: 8px 0; border-bottom: 1px solid #1e293b; }}
- .int-row {{ display: flex; justify-content: space-between; padding: 4px 0; }}
  .allok {{ color: #86efac; font-size: 13px; margin-top: 8px; }}
  .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }}
  .card {{ background: #0b1220; border: 1px solid #1e293b; border-radius: 8px; padding: 12px 14px; }}
@@ -764,15 +791,14 @@ class BridgeHandler(BaseHTTPRequestHandler):
 <div class="sub">每 60 秒自動更新 · 資料擷取於 {fetched}（本機時間）</div>
 <div class="pills">{ag_pill} {oc_pill} {to_pill}</div>
 {attention_html}
-<h2>Google AI Pro — 模型額度</h2>
-<input id="filter" placeholder="篩選模型… / filter models…" oninput="filt(this.value)">
+<h2>Google AI Pro — 共用額度 Pools</h2>
+<input id="filter" placeholder="篩選… / filter pools & models…" oninput="filt(this.value)">
 <div id="count"></div>
-<table id="ag-table"><thead><tr><th>模型</th><th>狀態</th><th>剩餘額度</th><th>重設倒數</th></tr></thead><tbody>
-{main_html}
-</tbody></table>
+<div id="pools">
+{pools_html}
+</div>
+{pools_note}
 {missing_block}
-{internal_block}
-{tab_note}
 <h2>OpenCode Go — 訂閱用量</h2>
 {oc_block}
 <h2>Together AI — 模型</h2>
@@ -792,17 +818,17 @@ function tick() {{
 }}
 function filt(q) {{
   q = q.toLowerCase();
-  const trs = document.querySelectorAll('#ag-table tbody tr');
+  const cards = document.querySelectorAll('#pools .pool');
   let n = 0;
-  trs.forEach(tr => {{
-    const hit = tr.textContent.toLowerCase().includes(q);
-    tr.style.display = hit ? '' : 'none';
+  cards.forEach(c => {{
+    const hit = c.textContent.toLowerCase().includes(q);
+    c.style.display = hit ? '' : 'none';
     if (hit) n++;
   }});
-  document.getElementById('count').textContent = n + ' / ' + trs.length;
+  document.getElementById('count').textContent = n + ' / ' + cards.length + ' 個共用額度';
 }}
  document.getElementById('count').textContent =
-  document.querySelectorAll('#ag-table tbody tr').length + ' 個模型';
+  document.querySelectorAll('#pools .pool').length + ' 個共用額度';
 tick(); setInterval(tick, 1000);
 </script></body></html>"""
         return html.encode()

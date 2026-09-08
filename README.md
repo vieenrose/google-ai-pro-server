@@ -7,12 +7,13 @@
    image generation (auto-routed from any gemini-* model), and a deep-research
    command (`deep research: <topic>` on the chat model) — all in-process on
    the bridge, no SearXNG / smolagents / agent framework.
-2. **Quota monitor** — public `/sloth-ai` + admin page: per-model status
-   (OK / Low / Exhausted) + remaining quota + reset countdowns across
-   Google AI Pro, OpenCode Go and Together AI — including known aliases
-   that are *not* in the upstream catalog. `tab_*` completion models are
-   shown as available (verified servable); `chat_*` ids stay folded away
-   (they carry quota but reject chat requests with HTTP 400). Model catalog refreshes hourly.
+2. **Quota monitor** — public `/sloth-ai` + admin page: Antigravity models
+   are grouped into their real shared quota pools (pool identity =
+   identical remaining fraction + reset time — e.g. all 20 Gemini models
+   draw from one pool), each with status, one bar, one countdown and
+   member chips; OpenCode Go and Together AI have their own sections.
+   Known aliases missing upstream get an explicit 'Not in catalog'
+   section. Model catalog refreshes hourly.
 3. **Subscription management** — Google AI Pro OAuth status + two-step PKCE
    re-auth in the admin page.
 
