@@ -52,8 +52,8 @@ C_BLUE = "\033[34m"
 
 MODELS = [
     "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-pro",
-    "gemini-3.1-pro-high", "gemini-2.5-pro", "claude-sonnet-4.6",
-    "claude-opus-4.6", "gpt-oss-120b",
+    "gemini-3.1-pro-high", "gemini-2.5-pro", "claude-sonnet-5-5",
+    "claude-opus-5-5", "gpt-oss-120b",
 ]
 
 

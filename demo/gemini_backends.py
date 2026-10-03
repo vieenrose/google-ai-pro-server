@@ -104,8 +104,10 @@ class AgyBackend:
         "gemini-3.1-pro-high": "gemini-3.1-pro-low",
         "gemini-2.5-pro": "gemini-2.5-pro",
         "gemini-2.5-flash": "gemini-2.5-flash",
-        "claude-sonnet-4.6": "claude-sonnet-4-6",
-        "claude-opus-4.6": "claude-opus-4-6-thinking",
+        "claude-sonnet-5-5": "claude-sonnet-5-5-medium",
+        "claude-opus-5-5": "claude-opus-5-5-medium",
+        "claude-sonnet-4.6": "claude-sonnet-5-5-medium",  # retired 2026-09 -> 5.5
+        "claude-opus-4.6": "claude-opus-5-5-medium",      # retired 2026-09 -> 5.5
         "gpt-oss-120b": "gpt-oss-120b",
     }
 
@@ -826,6 +828,12 @@ class GeminiApiBackend:
     # models that only exist on the cloudcode (Antigravity) side — the bridge
     # replies with a clear note instead of failing silently.
     CLOUDCODE_ONLY = {
+        "claude-sonnet-5-5-low",
+        "claude-sonnet-5-5-medium",
+        "claude-sonnet-5-5-high",
+        "claude-opus-5-5-low",
+        "claude-opus-5-5-medium",
+        "claude-opus-5-5-high",
         "claude-sonnet-4-6",
         "claude-opus-4-6",
         "claude-opus-4-6-thinking",
@@ -1122,9 +1130,11 @@ class AntigravityAppBackend(GeminiApiBackend):
         "gemini-3.1-pro": "gemini-3.1-pro-low",
         "gemini-3.1-pro-preview": "gemini-3.1-pro-low",
         "gemini-2.5-pro": "gemini-2.5-pro",
-        "claude-sonnet-4-6": "claude-sonnet-4-6",
-        "claude-opus-4-6": "claude-opus-4-6-thinking",
-        "claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
+        "claude-sonnet-5-5": "claude-sonnet-5-5-medium",
+        "claude-opus-5-5": "claude-opus-5-5-medium",
+        "claude-sonnet-4-6": "claude-sonnet-5-5-medium",      # retired 2026-09 -> 5.5
+        "claude-opus-4-6": "claude-opus-5-5-medium",          # retired 2026-09 -> 5.5
+        "claude-opus-4-6-thinking": "claude-opus-5-5-medium",  # retired 2026-09 -> 5.5
         "gemini-3.1-flash-image": "gemini-3.1-flash-image",
     }
 

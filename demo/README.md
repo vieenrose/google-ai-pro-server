@@ -90,7 +90,7 @@ python3 cli.py --backend mock "hello"                       # offline demo
 |---|---|
 | *(type a message)* | chat with Gemini |
 | `/deep <topic>` | run the Deep Research workflow (plan → search → report) |
-| `/model <name>` | switch model: `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `gemini-3.1-pro-high`, `gemini-2.5-pro`, `claude-sonnet-4.6`, `claude-opus-4.6`, `gpt-oss-120b` |
+| `/model <name>` | switch model: `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `gemini-3.1-pro-high`, `gemini-2.5-pro`, `claude-sonnet-5-5`, `claude-opus-5-5`, `gpt-oss-120b` |
 | `/backend <name>` | switch backend: `agy`, `direct`, `gemini`, `mock` |
 | `/stream` | toggle streaming output |
 | `/status` | show active backend + model |

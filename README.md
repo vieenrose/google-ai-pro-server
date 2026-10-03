@@ -39,18 +39,20 @@ bridge (`http://<host>:8787/v1/chat/completions`, open_ai provider).
 
 In Discourse AI → AI LLMs, add an `open_ai` provider pointing at
 `http://<bridge>:8787/v1/chat/completions` (e.g. gemini-3.8-flash-tiered,
-gemini-3.7-flash-tiered, claude-sonnet-4-6, claude-opus-4-6-thinking). Use the bridge token as the
-API key.
+gemini-3.7-flash-tiered, claude-sonnet-5-5, claude-opus-5-5). Use the bridge token as the
+API key. Claude tiers are selectable (`claude-sonnet-5-5-low|medium|high`,
+`claude-opus-5-5-*`); the bare name maps to `-medium`. The retired 4.6 names
+still resolve to their 5.5 replacements.
 
 ## Final architecture
 
 ```
 Discourse (forum posts + instant chat)
   └── Discourse AI
-        ├── AI LLMs     → gemini-3.8-flash-tiered, gemini-3.7-flash-tiered, claude-sonnet-4-6,
-        │                 claude-opus-4-6-thinking  (all point at this bridge)
+        ├── AI LLMs     → gemini-3.8-flash-tiered, gemini-3.7-flash-tiered, claude-sonnet-5-5,
+        │                 claude-opus-5-5  (all point at this bridge)
         ├── AI Agents   → chat bots (mention → agent → LLM):
-        │                 ai_gemini-3.8-flash, ai_gemini-3.7-flash, ai_claude-sonnet-4-6, ai_claude-opus-4-6
+        │                 ai_gemini-3.8-flash, ai_gemini-3.7-flash, ai_claude-sonnet-5-5, ai_claude-opus-5-5
         ├── AI Secrets  → API keys (if any external provider)
         └── AI Bots     → all_bot_ids include each model's bot user
               │  POST /v1/chat/completions (open_ai provider)
@@ -71,7 +73,7 @@ Discourse (forum posts + instant chat)
 |---|---|
 | `@ai_gemini-3.8-flash 你好` (topic or chat) | Discourse AI agent → bridge → Gemini 3.8 (native grounding) |
 | `@ai_gemini-3.7-flash 你好` (topic or chat) | Discourse AI agent → bridge → Gemini 3.7 (native grounding) |
-| `@ai_claude-sonnet-4-6 …` / `@ai_claude-opus-4-6 …` | Claude via bridge (Google AI Pro subscription) |
+| `@ai_claude-sonnet-5-5 …` / `@ai_claude-opus-5-5 …` | Claude via bridge (Google AI Pro subscription) |
 | `@ai_gemini-3.7-flash 畫一張企鵝` | bridge auto-routes to image model, uploads to forum |
 | `@ai_gemini-3.7-flash deep research: 樹懶` | bridge runs the deep-research workflow, streams report |
 | `GET /sloth-ai` | quota monitor (all users) |
